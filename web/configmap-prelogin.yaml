@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "prelogin.fullname" . }}-html
+data:
+  index.html: |
+  {{ .Files.Get "files/pre_login.html" | indent 4 }}

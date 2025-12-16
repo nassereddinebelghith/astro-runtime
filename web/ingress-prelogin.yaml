@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "prelogin.fullname" . }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: {{ .Values.host }}
+      http:
+        paths:
+          # PAGE PRE-LOGIN
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "prelogin.fullname" . }}
+                port:
+                  number: 80
+
+          # AIRFLOW API
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: astronomer-webserver
+                port:
+                  number: 8080
+
+          # AIRFLOW UI
+          - path: /ui
+            pathType: Prefix
+            backend:
+              service:
+                name: astronomer-webserver
+                port:
+                  number: 8080
