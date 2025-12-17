@@ -1,0 +1,52 @@
+{{- if .Values.web.ingress.enabled }}
+  {{- $annotations := merge dict
+      .Values.common.annotations
+      .Values.common.ingress.annotations
+      .Values.web.annotations
+      .Values.web.ingress.annotations
+  }}
+  {{- $labels := merge dict
+      .Values.common.labels
+      .Values.common.ingress.labels
+      .Values.web.labels
+      .Values.web.ingress.labels
+  }}
+  {{- $domain := include "astronomer.domain" (dict "Release" .Release "Values" .Values "Ingress" .Values.web.ingress) }}
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "astronomer.name.web" . }}
+  annotations:
+    {{- tpl (toYaml $annotations) . | nindent 4 }}
+  labels:
+    {{- include "astronomer.labels.web" . | nindent 4 }}
+      {{- with $labels }}
+      {{- tpl (toYaml .) . | nindent 4 }}
+      {{- end }}
+
+spec:
+  ingressClassName: {{ .Values.web.ingress.className | default .Values.common.ingress.className }}
+
+  rules:
+    - host: {{ $domain }}
+      http:
+        paths:
+          # ================================
+          # Tout passe par nginx-prelogin
+          # nginx gère l'interception du 401 et le proxy vers Airflow
+          # ================================
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nginx-prelogin
+                port:
+                  number: 80
+
+  tls:
+    - hosts:
+        - {{ $domain }}
+      secretName: {{ $domain }}-tls
+
+  {{- end }}

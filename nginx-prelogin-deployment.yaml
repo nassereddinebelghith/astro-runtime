@@ -1,0 +1,77 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-prelogin
+  namespace: airflow
+  labels:
+    app: nginx-prelogin
+    component: prelogin
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-prelogin
+  template:
+    metadata:
+      labels:
+        app: nginx-prelogin
+        component: prelogin
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25-alpine
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+        - name: html
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: nginx-prelogin-config
+      - name: html
+        configMap:
+          name: nginx-prelogin-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-prelogin
+  namespace: airflow
+  labels:
+    app: nginx-prelogin
+    component: prelogin
+spec:
+  selector:
+    app: nginx-prelogin
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  type: ClusterIP
