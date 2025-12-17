@@ -17,6 +17,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "astronomer.name.web" . }}
+  namespace: {{ .Release.Namespace }}
   annotations:
     {{- tpl (toYaml $annotations) . | nindent 4 }}
   labels:
@@ -32,6 +33,7 @@ spec:
     - host: {{ $domain }}
       http:
         paths:
+          {{- if .Values.nginx.prelogin.enabled }}
           # ================================
           # Tout passe par nginx-prelogin
           # nginx gère l'interception du 401 et le proxy vers Airflow
@@ -40,13 +42,35 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: nginx-prelogin
+                name: {{ include "astronomer.fullname" . }}-nginx-prelogin
                 port:
-                  number: 80
+                  number: {{ .Values.nginx.prelogin.service.port | default 80 }}
+          {{- else }}
+          # ================================
+          # Configuration par défaut (sans nginx-prelogin)
+          # Route directement vers Airflow webserver
+          # ================================
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "astronomer.service.web" . }}
+                port:
+                  name: http
+          {{- end }}
 
+  {{- if .Values.web.ingress.tls }}
+  tls:
+    {{- toYaml .Values.web.ingress.tls | nindent 4 }}
+  {{- else }}
   tls:
     - hosts:
         - {{ $domain }}
+      {{- if .Values.web.ingress.tlsSecretName }}
+      secretName: {{ .Values.web.ingress.tlsSecretName }}
+      {{- else }}
       secretName: {{ $domain }}-tls
-
+      {{- end }}
   {{- end }}
+
+{{- end }}

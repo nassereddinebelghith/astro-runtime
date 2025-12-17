@@ -1,0 +1,31 @@
+{{- if .Values.nginx.prelogin.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "astronomer.fullname" . }}-nginx-prelogin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "astronomer.labels" . | nindent 4 }}
+    component: nginx-prelogin
+  {{- with .Values.nginx.prelogin.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.nginx.prelogin.service.type | default "ClusterIP" }}
+  {{- if and (eq .Values.nginx.prelogin.service.type "LoadBalancer") .Values.nginx.prelogin.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.nginx.prelogin.service.loadBalancerIP }}
+  {{- end }}
+  selector:
+    {{- include "astronomer.selectorLabels" . | nindent 4 }}
+    component: nginx-prelogin
+  ports:
+  - name: http
+    port: {{ .Values.nginx.prelogin.service.port | default 80 }}
+    targetPort: 80
+    protocol: TCP
+    {{- if and (eq .Values.nginx.prelogin.service.type "NodePort") .Values.nginx.prelogin.service.nodePort }}
+    nodePort: {{ .Values.nginx.prelogin.service.nodePort }}
+    {{- end }}
+  sessionAffinity: {{ .Values.nginx.prelogin.service.sessionAffinity | default "None" }}
+{{- end }}

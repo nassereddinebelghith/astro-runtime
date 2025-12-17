@@ -1,8 +1,12 @@
+{{- if .Values.nginx.prelogin.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nginx-prelogin-config
-  namespace: airflow
+  name: {{ include "astronomer.fullname" . }}-nginx-prelogin
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "astronomer.labels" . | nindent 4 }}
+    component: nginx-prelogin
 data:
   nginx.conf: |
     events {
@@ -14,11 +18,8 @@ data:
         default_type application/octet-stream;
 
         upstream airflow {
-            # IMPORTANT: Remplace par ton vrai service Airflow
-            # Exemples possibles:
-            # - astronomer-webserver.airflow.svc.cluster.local:8080
-            # - airflow-webserver:8080
-            server astronomer-webserver:8080;
+            # Service Airflow webserver
+            server {{ include "astronomer.fullname" . }}-webserver:{{ .Values.ports.airflowUI }};
         }
 
         server {
@@ -47,22 +48,26 @@ data:
                 
                 # CRITIQUE: Intercepte les erreurs
                 proxy_intercept_errors on;
+                
+                # Timeouts
+                proxy_read_timeout {{ .Values.nginx.prelogin.proxyTimeout | default "300s" }};
+                proxy_connect_timeout 75s;
             }
         }
     }
 
   index.html: |
     <!DOCTYPE html>
-    <html lang="fr">
+    <html lang="{{ .Values.nginx.prelogin.language | default "fr" }}">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Apache Airflow - Authentification</title>
+        <title>{{ .Values.nginx.prelogin.title | default "Apache Airflow - Authentification" }}</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                background: linear-gradient(135deg, #017CEE 0%, #764ba2 100%);
+                background: {{ .Values.nginx.prelogin.backgroundColor | default "linear-gradient(135deg, #017CEE 0%, #764ba2 100%)" }};
                 min-height: 100vh;
                 display: flex;
                 align-items: center;
@@ -91,7 +96,7 @@ data:
                 margin-bottom: 40px;
             }
             .login-btn {
-                background: linear-gradient(135deg, #017CEE 0%, #764ba2 100%);
+                background: {{ .Values.nginx.prelogin.buttonColor | default "linear-gradient(135deg, #017CEE 0%, #764ba2 100%)" }};
                 color: white;
                 border: none;
                 padding: 16px 50px;
@@ -117,17 +122,18 @@ data:
     </head>
     <body>
         <div class="container">
-            <div class="logo">🚀</div>
-            <h1>Apache Airflow</h1>
-            <p class="subtitle">Plateforme de Data Orchestration</p>
+            <div class="logo">{{ .Values.nginx.prelogin.logo | default "🚀" }}</div>
+            <h1>{{ .Values.nginx.prelogin.heading | default "Apache Airflow" }}</h1>
+            <p class="subtitle">{{ .Values.nginx.prelogin.subtitle | default "Plateforme de Data Orchestration" }}</p>
             
             <a href="/login" class="login-btn">
-                Se connecter via SSO
+                {{ .Values.nginx.prelogin.buttonText | default "Se connecter via SSO" }}
             </a>
             
             <p class="security-note">
-                🔒 Authentification sécurisée via Keycloak
+                {{ .Values.nginx.prelogin.securityNote | default "🔒 Authentification sécurisée via Keycloak" }}
             </p>
         </div>
     </body>
     </html>
+{{- end }}

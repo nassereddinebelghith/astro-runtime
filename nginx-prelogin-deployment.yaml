@@ -1,28 +1,48 @@
+{{- if .Values.nginx.prelogin.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-prelogin
-  namespace: airflow
+  name: {{ include "astronomer.fullname" . }}-nginx-prelogin
+  namespace: {{ .Release.Namespace }}
   labels:
-    app: nginx-prelogin
-    component: prelogin
+    {{- include "astronomer.labels" . | nindent 4 }}
+    component: nginx-prelogin
 spec:
-  replicas: 2
+  replicas: {{ .Values.nginx.prelogin.replicas | default 2 }}
   selector:
     matchLabels:
-      app: nginx-prelogin
+      {{- include "astronomer.selectorLabels" . | nindent 6 }}
+      component: nginx-prelogin
   template:
     metadata:
       labels:
-        app: nginx-prelogin
-        component: prelogin
+        {{- include "astronomer.selectorLabels" . | nindent 8 }}
+        component: nginx-prelogin
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/nginx-prelogin-configmap.yaml") . | sha256sum }}
     spec:
+      {{- with .Values.nginx.prelogin.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nginx.prelogin.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nginx.prelogin.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.nginx.prelogin.podSecurityContext | nindent 8 }}
       containers:
       - name: nginx
-        image: nginx:1.25-alpine
+        image: "{{ .Values.nginx.prelogin.image.repository }}:{{ .Values.nginx.prelogin.image.tag | default "1.25-alpine" }}"
+        imagePullPolicy: {{ .Values.nginx.prelogin.image.pullPolicy | default "IfNotPresent" }}
         ports:
         - containerPort: 80
           name: http
+          protocol: TCP
         volumeMounts:
         - name: config
           mountPath: /etc/nginx/nginx.conf
@@ -31,47 +51,30 @@ spec:
           mountPath: /usr/share/nginx/html/index.html
           subPath: index.html
         resources:
-          requests:
-            memory: "64Mi"
-            cpu: "100m"
-          limits:
-            memory: "128Mi"
-            cpu: "200m"
+          {{- toYaml .Values.nginx.prelogin.resources | nindent 10 }}
         livenessProbe:
           httpGet:
             path: /
             port: 80
           initialDelaySeconds: 10
           periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
         readinessProbe:
           httpGet:
             path: /
             port: 80
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          {{- toYaml .Values.nginx.prelogin.securityContext | nindent 10 }}
       volumes:
       - name: config
         configMap:
-          name: nginx-prelogin-config
+          name: {{ include "astronomer.fullname" . }}-nginx-prelogin
       - name: html
         configMap:
-          name: nginx-prelogin-config
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginx-prelogin
-  namespace: airflow
-  labels:
-    app: nginx-prelogin
-    component: prelogin
-spec:
-  selector:
-    app: nginx-prelogin
-  ports:
-  - name: http
-    port: 80
-    targetPort: 80
-    protocol: TCP
-  type: ClusterIP
+          name: {{ include "astronomer.fullname" . }}-nginx-prelogin
+{{- end }}

@@ -1,0 +1,79 @@
+# ============================================
+# Configuration nginx-prelogin
+# ============================================
+# Ajoute cette section à ton values.yaml existant
+
+nginx:
+  prelogin:
+    # Active/désactive le nginx prelogin
+    enabled: true
+    
+    # Nombre de réplicas
+    replicas: 2
+    
+    # Image nginx
+    image:
+      repository: nginx
+      tag: "1.25-alpine"
+      pullPolicy: IfNotPresent
+    
+    # Timeout pour le proxy vers Airflow
+    proxyTimeout: "300s"
+    
+    # Configuration de la landing page
+    language: "fr"
+    title: "Apache Airflow - Authentification"
+    logo: "🚀"
+    heading: "Apache Airflow"
+    subtitle: "Plateforme de Data Orchestration"
+    buttonText: "Se connecter via SSO"
+    securityNote: "🔒 Authentification sécurisée via Keycloak"
+    
+    # Couleurs (CSS)
+    backgroundColor: "linear-gradient(135deg, #017CEE 0%, #764ba2 100%)"
+    buttonColor: "linear-gradient(135deg, #017CEE 0%, #764ba2 100%)"
+    
+    # Resources
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"
+    
+    # Service
+    service:
+      type: ClusterIP
+      port: 80
+      annotations: {}
+      sessionAffinity: None
+    
+    # Security contexts
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 101
+      fsGroup: 101
+    
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 101
+      capabilities:
+        drop:
+        - ALL
+    
+    # Node selector
+    nodeSelector: {}
+    
+    # Tolerations
+    tolerations: []
+    
+    # Affinity
+    affinity: {}
+
+# ============================================
+# Note: Cette config s'intègre avec ton values.yaml existant
+# Tu peux personnaliser tous ces paramètres selon tes besoins
+# ============================================
