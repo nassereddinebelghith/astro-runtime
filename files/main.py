@@ -1,6 +1,23 @@
+# Imports pour Illumio/ArgoCD
+from .argocd_client import ArgoCDClient, ArgoCDConfig as ArgoCDClientConfig
+from .illumio_service import IllumioService
+
+
 # ========================================
 # Endpoints pour les labels Illumio
 # ========================================
+
+# Initialisation du client ArgoCD et du service Illumio
+argocd_client_config = ArgoCDClientConfig(
+    url=config.argocd.url,
+    token=config.argocd.token,
+    verify_ssl=config.argocd.verify_ssl
+)
+argocd_client = ArgoCDClient(argocd_client_config)
+illumio_service = IllumioService(
+    argocd_client=argocd_client,
+    tenant_namespace_label=config.argocd.tenant_namespace_label
+)
 
 @app.get("/v1/instances/{release_id}/illumio-label")
 async def get_instance_illumio_label(
