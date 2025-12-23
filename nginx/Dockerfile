@@ -1,25 +1,23 @@
-# Use your internal registry base image (already mirrored/allowed in your context)
 FROM nginx:1.25-alpine
 
-# Optional metadata
-LABEL org.opencontainers.image.title="custom-nginx-static" \
-      org.opencontainers.image.description="Static landing page for Airflow/Astronomer" \
-      org.opencontainers.image.source="internal"
+# Copier la config nginx
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Replace default nginx config with a minimal one (non-root, port 8080)
-COPY nginx.conf /etc/nginx/nginx.conf
+# Copier la page HTML
+COPY index.html /usr/share/nginx/html/
 
-# Copy your static website
-COPY index.html /usr/share/nginx/html/index.html
+# ⭐ AJOUTE CETTE LIGNE - Override le pid pour utiliser /tmp
+RUN sed -i 's|pid /var/run/nginx.pid;|pid /tmp/nginx.pid;|g' /etc/nginx/nginx.conf
 
-# Ensure permissions for non-root execution (nginx user exists on alpine image)
-RUN mkdir -p /var/cache/nginx /var/run \
-    && chown -R nginx:nginx /usr/share/nginx /var/cache/nginx /var/run /etc/nginx
+# Permissions
+RUN mkdir -p /var/cache/nginx /tmp \
+    && chown -R nginx:nginx /usr/share/nginx /var/cache/nginx /etc/nginx /tmp \
+    && chmod -R 755 /usr/share/nginx/html
 
 USER nginx
 
 EXPOSE 8080
 
-# Basic healthcheck
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD wget -qO- http://127.0.0.1:8080/ >/dev/null 2>&1 || exit 1
+    CMD wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1 || exit 1
+
