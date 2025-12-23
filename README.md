@@ -1,270 +1,250 @@
-# Configuration Nginx Prelogin pour Airflow 3.1.4 + Keycloak
+# Airflow Pre-Login Plugin - Installation Guide
 
-## Vue d’ensemble
+## 📋 Vue d'ensemble
 
-Cette configuration permet d’afficher une page d’accueil personnalisée **avant** l’authentification Keycloak, au lieu du 401 par défaut.
+Ce plugin Airflow crée une page de landing custom qui s'affiche avant l'authentification Keycloak.
 
-## Architecture
+## 📁 Structure des fichiers
 
 ```
-User → Ingress → nginx-prelogin → Airflow
-                      ↓
-                (intercepte 401)
-                      ↓
-                Landing Page
+plugins/
+├── prelogin_plugin.py          # Plugin Flask qui gère les routes
+└── templates/
+    └── prelogin.html           # Template HTML de la page de landing
 ```
 
-### Comment ça marche
+## 🚀 Installation
 
-1. **User accède à `/`** → nginx proxy vers Airflow
-1. **Airflow retourne 401** (pas authentifié)
-1. **nginx intercepte le 401** → sert la landing page
-1. **User clique “Se connecter”** → `/login` → Auth Keycloak normale
-1. **Après auth** → User arrive sur Airflow avec les bons droits
+### Option 1 : Installation manuelle
 
-## Fichiers
-
-- `all-in-one-nginx-prelogin.yaml` - **Fichier complet** (ConfigMap + Deployment + Service)
-- `nginx-prelogin-configmap.yaml` - ConfigMap seul
-- `nginx-prelogin-deployment.yaml` - Deployment + Service
-- `web-ingress.yaml` - Ingress mis à jour
-
-## Déploiement
-
-### Option 1: Déploiement rapide (recommandé)
+1. **Copier les fichiers dans ton environnement Airflow**
 
 ```bash
-# Déploie tout en une commande
-kubectl apply -f all-in-one-nginx-prelogin.yaml
+# Sur ton serveur Airflow
+cd $AIRFLOW_HOME
 
-# Vérifie que les pods démarrent
-kubectl get pods -n airflow -l app=nginx-prelogin
+# Copier le plugin
+cp prelogin_plugin.py plugins/
 
-# Vérifie le service
-kubectl get svc -n airflow nginx-prelogin
+# Copier le template
+mkdir -p plugins/templates
+cp templates/prelogin.html plugins/templates/
 ```
 
-### Option 2: Déploiement par étapes
+### Option 2 : Avec Astronomer (GitOps)
+
+1. **Ajouter à ton repo Astronomer**
 
 ```bash
-# 1. ConfigMap
-kubectl apply -f nginx-prelogin-configmap.yaml
+# Dans ton repo Astronomer
+mkdir -p plugins/templates
 
-# 2. Deployment et Service
-kubectl apply -f nginx-prelogin-deployment.yaml
+# Copier les fichiers
+cp prelogin_plugin.py plugins/
+cp templates/prelogin.html plugins/templates/
 
-# 3. Vérifie le déploiement
-kubectl get all -n airflow -l app=nginx-prelogin
+# Commit et push
+git add plugins/
+git commit -m "feat: Add pre-login custom page"
+git push origin main
 ```
 
-### Mise à jour de l’Ingress
-
-**IMPORTANT**: Remplace ton fichier `web/web-ingress.yaml` existant par le nouveau.
-
-Si tu utilises Helm:
+2. **Déployer avec Astronomer CLI**
 
 ```bash
-# Copie le nouveau web-ingress.yaml dans ton chart
-cp web-ingress.yaml /path/to/your/helm/chart/templates/
-
-# Upgrade Helm
-helm upgrade airflow ./your-chart -n airflow
+astro deploy
 ```
 
-## Configuration requise
+### Option 3 : Avec Kubernetes/Helm
 
-### ⚠️ IMPORTANT: Nom du service Airflow
+Ajoute dans ton `values.yaml` Helm chart :
 
-Dans `nginx.conf`, tu dois remplacer le nom du service Airflow par le vrai nom:
-
-```nginx
-upstream airflow {
-    # Remplace par le vrai nom de ton service
-    server astronomer-webserver:8080;
-}
+```yaml
+airflow:
+  extraConfigmapMounts:
+    - name: prelogin-plugin
+      mountPath: /opt/airflow/plugins/prelogin_plugin.py
+      subPath: prelogin_plugin.py
+      configMap: prelogin-configmap
+    - name: prelogin-template
+      mountPath: /opt/airflow/plugins/templates/prelogin.html
+      subPath: prelogin.html
+      configMap: prelogin-configmap
 ```
 
-Pour trouver le bon nom:
+Créer le ConfigMap :
 
 ```bash
-kubectl get svc -n airflow | grep webserver
+kubectl create configmap prelogin-configmap \
+  --from-file=prelogin_plugin.py=plugins/prelogin_plugin.py \
+  --from-file=prelogin.html=plugins/templates/prelogin.html \
+  -n <ton-namespace>
 ```
 
-Exemples possibles:
+## ⚙️ Configuration
 
-- `astronomer-webserver.airflow.svc.cluster.local:8080`
-- `airflow-webserver:8080`
-- `mon-airflow-webserver:8080`
+### 1. Vérifier que ton CustomKeycloakAuthManager est configuré
 
-## Vérification
+Dans `airflow.cfg` ou via variables d'environnement :
 
-### 1. Vérifie que nginx est UP
+```ini
+[core]
+auth_manager = path.to.your.CustomKeycloakAuthManager
+```
+
+Ou :
 
 ```bash
-kubectl get pods -n airflow -l app=nginx-prelogin
-# Devrait montrer 2 pods en Running
+export AIRFLOW__CORE__AUTH_MANAGER=path.to.your.CustomKeycloakAuthManager
 ```
 
-### 2. Vérifie les logs nginx
+### 2. Redémarrer Airflow webserver
 
 ```bash
-kubectl logs -n airflow -l app=nginx-prelogin -f
+# Avec systemd
+sudo systemctl restart airflow-webserver
+
+# Avec Astronomer
+astro dev restart
+
+# Avec Kubernetes
+kubectl rollout restart deployment/airflow-webserver -n <namespace>
 ```
 
-### 3. Test depuis un pod
+## ✅ Vérification
+
+### 1. Vérifier que le plugin est chargé
 
 ```bash
-kubectl run -it --rm debug --image=curlimages/curl --restart=Never -n airflow -- sh
-
-# Dans le pod:
-curl http://nginx-prelogin
-# Devrait retourner le HTML de la landing page
-
-curl -I http://nginx-prelogin/login
-# Devrait retourner 302 (redirection Keycloak)
+airflow plugins
 ```
 
-### 4. Test depuis le navigateur
+Tu devrais voir :
 
-1. Va sur ton URL Airflow: `https://airflow.monentreprise.com/`
-1. Tu devrais voir la landing page 🚀
-1. Clique “Se connecter via SSO”
-1. Authentification Keycloak (Touch ID / code PIN)
-1. Redirection vers Airflow
+```
+name        | source
+------------+----------------------------------
+prelogin    | $PLUGINS_FOLDER/prelogin_plugin.py
+```
 
-## Troubleshooting
-
-### Bad Gateway 502
-
-**Cause**: Le nom du service Airflow est incorrect dans nginx.conf
-
-**Solution**:
+### 2. Tester l'accès
 
 ```bash
-# 1. Trouve le bon nom
-kubectl get svc -n airflow | grep webserver
+# Depuis ton navigateur
+https://ton-airflow.com/
 
-# 2. Édite le ConfigMap
-kubectl edit configmap nginx-prelogin-config -n airflow
-
-# 3. Modifie la ligne "server astronomer-webserver:8080;"
-#    avec le bon nom de service
-
-# 4. Redémarre nginx
-kubectl rollout restart deployment/nginx-prelogin -n airflow
+# Ou avec curl
+curl -L http://ton-airflow.com/
 ```
 
-### La landing page ne s’affiche pas
+Tu devrais être redirigé vers `/welcome` et voir la page custom.
 
-**Cause**: Le 401 n’est pas intercepté
+### 3. Tester le bouton de login
 
-**Vérification**:
+1. Accéder à `https://ton-airflow.com/`
+2. Cliquer sur "Sign in with Keycloak"
+3. Tu devrais être redirigé vers Keycloak pour l'authentification
+
+## 🔧 Troubleshooting
+
+### Le plugin ne se charge pas
 
 ```bash
-# Vérifie la config nginx
-kubectl exec -n airflow deployment/nginx-prelogin -- cat /etc/nginx/nginx.conf | grep "proxy_intercept_errors"
-# Doit retourner: proxy_intercept_errors on;
+# Vérifier les logs du webserver
+kubectl logs -f deployment/airflow-webserver -n <namespace>
+
+# Vérifier les permissions des fichiers
+ls -la $AIRFLOW_HOME/plugins/
+ls -la $AIRFLOW_HOME/plugins/templates/
 ```
 
-### Boucle de redirection infinie
-
-**Cause**: L’Ingress pointe toujours vers le service Airflow au lieu de nginx-prelogin
-
-**Solution**:
+### La page ne s'affiche pas
 
 ```bash
-# Vérifie l'Ingress
-kubectl get ingress -n airflow -o yaml | grep "name:"
-# Doit montrer: name: nginx-prelogin
+# Vérifier que le template est accessible
+cat $AIRFLOW_HOME/plugins/templates/prelogin.html
+
+# Tester manuellement la route
+curl http://localhost:8080/welcome
 ```
 
-## Personnalisation
+### Le bouton ne redirige pas vers Keycloak
 
-### Modifier la landing page
-
-1. Édite le ConfigMap:
-
-```bash
-kubectl edit configmap nginx-prelogin-config -n airflow
+```python
+# Tester la route /login manuellement
+from airflow.www.app import create_app
+app = create_app()
+with app.test_client() as client:
+    response = client.get('/login', follow_redirects=False)
+    print(f"Status: {response.status_code}")
+    print(f"Location: {response.headers.get('Location')}")
 ```
 
-1. Modifie la section `index.html`
-1. Redémarre nginx:
+## 🎨 Personnalisation
 
-```bash
-kubectl rollout restart deployment/nginx-prelogin -n airflow
-```
+### Modifier le design de la page
 
-### Changer les couleurs
+Édite `plugins/templates/prelogin.html` et modifie :
 
-Dans `index.html`, modifie les gradients:
+- Les couleurs dans la section `<style>`
+- Le titre et sous-titre
+- Le logo emoji (🚀)
+- Les features listées
 
-```css
-background: linear-gradient(135deg, #017CEE 0%, #764ba2 100%);
-```
+### Modifier le comportement du plugin
 
-### Ajouter un logo
+Édite `plugins/prelogin_plugin.py` :
 
-Remplace l’emoji 🚀 par une image:
+- Route `/welcome` : modifier la logique d'affichage
+- Route `/start-auth` : modifier la redirection
+- Middleware `redirect_root_to_welcome()` : changer les conditions de redirection
 
-```html
-<img src="/static/logo.png" alt="Logo" style="width: 120px;" />
-```
-
-## Support
-
-Si tu as des problèmes:
-
-1. Vérifie les logs: `kubectl logs -n airflow -l app=nginx-prelogin`
-1. Vérifie le service Airflow: `kubectl get svc -n airflow`
-1. Test le proxy nginx: `kubectl exec -n airflow deployment/nginx-prelogin -- curl -I http://astronomer-webserver:8080`
-
-## Architecture détaillée
+## 📊 Flow utilisateur complet
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Ingress                          │
-│            (https://airflow.domain.com)             │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       │ path: /
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│              Service: nginx-prelogin                │
-└──────────────────────┬──────────────────────────────┘
-                       │
-                       ▼
-┌─────────────────────────────────────────────────────┐
-│           Deployment: nginx-prelogin                │
-│                                                     │
-│  ┌───────────────────────────────────────────┐    │
-│  │  nginx.conf:                              │    │
-│  │  - error_page 401 = @landing_page         │    │
-│  │  - location / → proxy_pass airflow        │    │
-│  │  - proxy_intercept_errors on              │    │
-│  └───────────────────────────────────────────┘    │
-└──────────────┬────────────────────┬─────────────────┘
-               │                    │
-        User demande /       Airflow répond 401
-               │                    │
-               ▼                    ▼
-     ┌──────────────────┐   ┌─────────────────┐
-     │ Service: Airflow │   │  Landing Page   │
-     │   (webserver)    │   │   (index.html)  │
-     └──────────────────┘   └─────────────────┘
+1. User accède à https://mon-airflow.com/
+                    ↓
+2. Middleware détecte "/" + non authentifié
+                    ↓
+3. Redirect automatique vers /welcome
+                    ↓
+4. Affichage de prelogin.html
+                    ↓
+5. User clique sur "Sign in with Keycloak"
+                    ↓
+6. Redirect vers /start-auth
+                    ↓
+7. Redirect vers /login
+                    ↓
+8. CustomKeycloakAuthManager prend le relais
+                    ↓
+9. Redirect vers Keycloak OIDC
+                    ↓
+10. User s'authentifie sur Keycloak
+                    ↓
+11. Callback vers Airflow /oauth-authorized
+                    ↓
+12. User authentifié → Redirect vers /home
+                    ↓
+13. ✅ User accède à Airflow avec ses workflows
 ```
 
-## Notes importantes
+## 📝 Notes importantes
 
-- **Namespace**: Tous les fichiers utilisent le namespace `airflow`. Modifie si nécessaire.
-- **Replicas**: 2 réplicas nginx pour la haute disponibilité
-- **Resources**: Limites CPU/Memory configurées pour un usage léger
-- **Health checks**: Liveness et Readiness probes configurés
+- Le plugin utilise Flask Blueprint pour s'intégrer proprement dans Airflow
+- La redirection "/" → "/welcome" se fait uniquement pour les utilisateurs non authentifiés
+- Les routes statiques (`/static`) et API (`/api`) ne sont pas affectées
+- Le template est responsive et fonctionne sur mobile
+- Compatible avec Airflow 3.x et le nouveau système Auth Manager
 
-## Prochaines étapes
+## 🆘 Support
 
-1. ✅ Déployer nginx-prelogin
-1. ✅ Mettre à jour l’Ingress
-1. ⚠️ **Ajuster le nom du service Airflow dans nginx.conf**
-1. ✅ Tester l’accès
-1. 🎨 Personnaliser la landing page selon tes besoins
+Si tu rencontres des problèmes :
+
+1. Vérifie les logs Airflow : `airflow-webserver.log`
+2. Teste chaque route individuellement : `/welcome`, `/start-auth`, `/login`
+3. Vérifie que ton CustomKeycloakAuthManager fonctionne sans le plugin
+
+## 📄 Licence
+
+Ce plugin est fourni tel quel pour une utilisation interne.
