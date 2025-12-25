@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Apache Airflow - BNP Paribas</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" />
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #00915a 0%, #005a37 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        /* Animated background circles */
+        body::before,
+        body::after {
+            content: '';
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.05);
+        }
+        
+        body::before {
+            width: 400px;
+            height: 400px;
+            top: -200px;
+            right: -100px;
+            animation: float 20s ease-in-out infinite;
+        }
+        
+        body::after {
+            width: 300px;
+            height: 300px;
+            bottom: -150px;
+            left: -50px;
+            animation: float 15s ease-in-out infinite reverse;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-30px) scale(1.1); }
+        }
+        
+        .container {
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 30px 90px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+            max-width: 480px;
+            width: 100%;
+            position: relative;
+            z-index: 1;
+            animation: slideIn 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: scale(0.95) translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #00915a 0%, #007a4d 100%);
+            padding: 60px 40px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .header::before {
+            content: '';
+            position: absolute;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
+            top: -100px;
+            right: -100px;
+            border-radius: 50%;
+        }
+        
+        .logo {
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 25px;
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            position: relative;
+            z-index: 1;
+            animation: pulse 3s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
+            50% { transform: scale(1.05); box-shadow: 0 0 0 15px rgba(255, 255, 255, 0); }
+        }
+        
+        .logo svg {
+            width: 50px;
+            height: 50px;
+        }
+        
+        .title {
+            font-size: 28px;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 8px;
+            position: relative;
+            z-index: 1;
+            letter-spacing: -0.5px;
+        }
+        
+        .subtitle {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 14px;
+            font-weight: 500;
+            position: relative;
+            z-index: 1;
+            letter-spacing: 0.3px;
+        }
+        
+        .body {
+            padding: 50px 40px;
+        }
+        
+        .welcome {
+            text-align: center;
+            margin-bottom: 35px;
+        }
+        
+        .welcome h2 {
+            font-size: 24px;
+            color: #1a202c;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        
+        .welcome p {
+            color: #718096;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            color: #065f46;
+            padding: 12px 20px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 30px;
+            border: 1px solid #a7f3d0;
+        }
+        
+        .badge i {
+            color: #10b981;
+            font-size: 16px;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #00915a 0%, #007a4d 100%);
+            color: white;
+            border: none;
+            padding: 18px 32px;
+            border-radius: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            width: 100%;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            cursor: pointer;
+            box-shadow: 0 10px 25px rgba(0, 145, 90, 0.25);
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            transition: left 0.7s;
+        }
+        
+        .btn:hover::before {
+            left: 100%;
+        }
+        
+        .btn:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 15px 35px rgba(0, 145, 90, 0.35);
+        }
+        
+        .btn:active {
+            transform: translateY(-1px);
+        }
+        
+        .btn i {
+            font-size: 18px;
+            transition: transform 0.3s ease;
+        }
+        
+        .btn:hover i {
+            transform: translateX(5px);
+        }
+        
+        .divider {
+            margin: 35px 0;
+            text-align: center;
+            position: relative;
+        }
+        
+        .divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, #e2e8f0, transparent);
+        }
+        
+        .divider span {
+            background: white;
+            padding: 0 15px;
+            position: relative;
+            color: #a0aec0;
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .footer {
+            text-align: center;
+            color: #a0aec0;
+            font-size: 13px;
+        }
+        
+        .footer-version {
+            margin-bottom: 6px;
+            font-weight: 500;
+            color: #718096;
+        }
+        
+        .footer-copy {
+            font-size: 12px;
+            color: #cbd5e0;
+        }
+        
+        @media (max-width: 480px) {
+            .header {
+                padding: 50px 30px;
+            }
+            
+            .body {
+                padding: 40px 30px;
+            }
+            
+            .title {
+                font-size: 24px;
+            }
+            
+            .logo {
+                width: 75px;
+                height: 75px;
+            }
+            
+            .logo svg {
+                width: 40px;
+                height: 40px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">
+                <!-- Modern workflow icon -->
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L2 7L12 12L22 7L12 2Z" fill="white" opacity="0.9"/>
+                    <path d="M2 17L12 22L22 17" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M2 12L12 17L22 12" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <h1 class="title">Apache Airflow</h1>
+            <p class="subtitle">BNP Paribas DataHub OaaS</p>
+        </div>
+        
+        <div class="body">
+            <div class="welcome">
+                <h2>Welcome</h2>
+                <p>Sign in to access your workflows and data pipelines</p>
+            </div>
+            
+            <center>
+                <div class="badge">
+                    <i class="fas fa-lock"></i>
+                    <span>Enterprise SSO Enabled</span>
+                </div>
+            </center>
+            
+            <a href="/dags" class="btn">
+                <span>Continue with Keycloak</span>
+                <i class="fas fa-arrow-right"></i>
+            </a>
+            
+            <div class="divider">
+                <span>Secure Platform</span>
+            </div>
+            
+            <div class="footer">
+                <div class="footer-version">DataHub OaaS {{ .Chart.Version }}</div>
+                <div class="footer-copy">© 2025 BNP Paribas. All rights reserved.</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // SOLUTION DÉFINITIVE pour la redirection
+        (function() {
+            'use strict';
+            
+            // Debug: log les cookies
+            console.log('Current cookies:', document.cookie);
+            console.log('Current path:', window.location.pathname);
+            
+            // Fonction pour vérifier l'authentification
+            function isAuthenticated() {
+                const cookies = document.cookie.split(';');
+                
+                for (let cookie of cookies) {
+                    const trimmed = cookie.trim();
+                    
+                    // Vérifie tous les cookies possibles d'Airflow/Keycloak
+                    if (trimmed.startsWith('_token=') || 
+                        trimmed.startsWith('session=') ||
+                        trimmed.startsWith('airflow_session=') ||
+                        trimmed.startsWith('csrftoken=')) {
+                        
+                        // Vérifie que le cookie n'est pas vide
+                        const value = trimmed.split('=')[1];
+                        if (value && value.length > 0) {
+                            console.log('Auth cookie found:', trimmed.split('=')[0]);
+                            return true;
+                        }
+                    }
+                }
+                
+                return false;
+            }
+            
+            // Redirige SEULEMENT si on est sur la racine ET authentifié
+            if (window.location.pathname === '/' && isAuthenticated()) {
+                console.log('Redirecting to /dags...');
+                
+                // Utilise replace pour ne pas garder l'historique
+                window.location.replace('/dags');
+                
+                // Fallback au cas où replace ne marche pas
+                setTimeout(function() {
+                    if (window.location.pathname === '/') {
+                        window.location.href = '/dags';
+                    }
+                }, 100);
+            }
+        })();
+    </script>
+</body>
+</html>
