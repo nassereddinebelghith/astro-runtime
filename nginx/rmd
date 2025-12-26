@@ -1,0 +1,1517 @@
+# ================================================================================
+Apache Airflow Custom Landing Page with Enterprise SSO
+
+# OVERVIEW
+
+This project implements a custom-branded pre-authentication landing page for
+Apache Airflow 3.1.4 deployed on Kubernetes using Astronomer. The solution
+provides seamless enterprise Single Sign-On (SSO) authentication through
+Keycloak OIDC while maintaining BNP Paribas brand identity and user experience
+standards.
+
+# TABLE OF CONTENTS
+
+1. Architecture
+1. Component Overview
+1. Authentication Flow
+1. Session Management
+1. Design Decisions
+1. Deployment Strategy
+1. Security Considerations
+1. Known Issues
+1. Troubleshooting Guide
+1. Future Enhancements
+1. Monitoring & Health Checks
+1. Support & Maintenance
+1. Glossary
+1. Appendix
+
+================================================================================
+
+1. ARCHITECTURE
+   ================================================================================
+
+## HIGH-LEVEL ARCHITECTURE DIAGRAM
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                            End Users                                 │
+│                  (Data Engineers, Analysts, Admins)                  │
+└────────────────────────────┬────────────────────────────────────────┘
+│
+│ HTTPS
+│
+▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                     Kubernetes Ingress                               │
+│              (astronomer-ap3877-hprd-s7b7a818)                      │
+│                                                                      │
+│  - TLS Termination                                                   │
+│  - Load Balancing                                                    │
+│  - DNS Routing                                                       │
+└────────────────────────────┬────────────────────────────────────────┘
+│
+│
+▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Nginx Reverse Proxy                             │
+│  ┌────────────────────────────────────────────────────────────┐    │
+│  │  Routing Logic:                                             │    │
+│  │  ┌────────────────────────────────────────────────────┐   │    │
+│  │  │  Route: /                                           │   │    │
+│  │  │  → Custom Landing Page                             │   │    │
+│  │  │  → Corporate branding                              │   │    │
+│  │  │  → Session detection                               │   │    │
+│  │  └────────────────────────────────────────────────────┘   │    │
+│  │  ┌────────────────────────────────────────────────────┐   │    │
+│  │  │  Route: /assets/*                                   │   │    │
+│  │  │  → Static Resources (CSS, JS, Images)              │   │    │
+│  │  └────────────────────────────────────────────────────┘   │    │
+│  │  ┌────────────────────────────────────────────────────┐   │    │
+│  │  │  Route: /* (all other paths)                       │   │    │
+│  │  │  → Proxy to Airflow Application                    │   │    │
+│  │  └────────────────────────────────────────────────────┘   │    │
+│  └────────────────────────────────────────────────────────────┘    │
+│                                                                      │
+│  Features:                                                           │
+│  - No error interception (preserves OAuth flow)                     │
+│  - Header forwarding for proxy transparency                         │
+│  - HTTP/1.1 with WebSocket upgrade support                          │
+└────────────────────────────┬────────────────────────────────────────┘
+│
+│
+┌──────────────┴──────────────┐
+│                             │
+▼                             ▼
+┌──────────────────────────┐  ┌──────────────────────────────────────┐
+│   Airflow API Server     │  │        Keycloak OIDC Provider         │
+│   (Airflow 3.1.4)        │  │  ┌─────────────────────────────────┐ │
+│  ┌────────────────────┐  │  │  │  Identity Provider              │ │
+│  │ Custom Auth Manager│  │  │  │  - User Authentication          │ │
+│  │ (Keycloak OIDC)    │  │  │  │  - Token Management             │ │
+│  │                    │  │  │  │  - Session Lifecycle            │ │
+│  │ - OAuth2/OIDC Flow │  │  │  │  - RBAC Integration             │ │
+│  │ - Token Validation │  │  │  └─────────────────────────────────┘ │
+│  │ - Session Mgmt     │  │  │                                       │
+│  └────────────────────┘  │  │  Configuration:                       │
+│                          │  │  - Realm: <REALM_NAME>                │
+│  Core Functions:         │  │  - Client: airflow-client             │
+│  - DAG Management        │  │  - Protocol: OpenID Connect + PKCE    │
+│  - Task Orchestration    │  │  - Session Idle: 30 minutes           │
+│  - Workflow Monitoring   │  │  - Access Token TTL: 5 minutes        │
+│  - REST API              │  │  - Refresh Token TTL: 30 minutes      │
+└──────────────────────────┘  └───────────────────────────────────────┘
+│                              │
+│                              │
+▼                              ▼
+┌──────────────────────────┐  ┌───────────────────────────────────────┐
+│   PostgreSQL Database    │  │    HashiCorp Vault (Optional)         │
+│                          │  │                                        │
+│  - Airflow Metadata      │  │  - Client Secrets Storage             │
+│  - Connection Configs    │  │  - API Keys Management                │
+│  - DAG Serialization     │  │  - Certificate Storage                │
+│  - User Sessions (FAB)   │  │  - Credential Rotation                │
+└──────────────────────────┘  └───────────────────────────────────────┘
+
+## DATA FLOW DIAGRAM
+
+Authentication Flow:
+┌────┐    ┌───────┐    ┌─────────┐    ┌──────────┐    ┌──────────┐
+│User│───▶│ Nginx │───▶│ Airflow │───▶│ Keycloak │───▶│   User   │
+└────┘    └───────┘    └─────────┘    └──────────┘    └──────────┘
+│                                                            │
+│         Landing Page                                       │
+│◀───────────────────────────────────────────────────────────┘
+│  
+│         Click “Login”  
+├───────────────────────────────────────────────────────────▶
+│  
+│         Redirect to Keycloak  
+│◀───────────────────────────────────────────────────────────
+│  
+│         Enter Credentials  
+├───────────────────────────────────────────────────────────▶
+│  
+│         Auth Code  
+│◀───────────────────────────────────────────────────────────
+│  
+│         Exchange Code for Tokens  
+├───────────────────────────────────────────────────────────▶
+│  
+│         Access Token + Session Cookies  
+│◀───────────────────────────────────────────────────────────
+│  
+│         Access Airflow UI  
+└───────────────────────────────────────────────────────────▶
+
+# ================================================================================
+2. COMPONENT OVERVIEW
+
+1. NGINX REVERSE PROXY
+
+-----
+
+Purpose:
+Acts as the entry point and routing layer for all HTTP(S) traffic to the
+Airflow deployment.
+
+Responsibilities:
+
+- Serve custom branded landing page on root path
+- Proxy authenticated requests to Airflow API server
+- Forward necessary headers for OAuth flow
+- Provide static asset serving with caching
+- Health check endpoint for Kubernetes probes
+
+Key Characteristics:
+
+- Stateless operation
+- No session storage
+- Minimal request modification
+- Transparent proxy behavior for OAuth flows
+
+1. CUSTOM LANDING PAGE
+
+-----
+
+Purpose:
+Provides a branded pre-authentication experience aligned with corporate
+identity standards.
+
+Features:
+
+- Responsive Design: Mobile-first approach with adaptive layouts
+- Brand Compliance: BNP Paribas color scheme and visual identity
+- Session Intelligence: Detects existing authentication state
+- Dynamic Content: Auto-updating copyright year
+- Cookie Management: Intelligent cleanup of expired sessions
+- Accessibility: WCAG 2.1 AA compliant
+
+User Experience Flow:
+
+1. User arrives at root URL
+1. JavaScript detects authentication cookies
+1. If authenticated → Auto-redirect to DAGs view
+1. If not authenticated → Display landing page
+1. User clicks “Continue with Keycloak”
+1. OAuth flow initiates seamlessly
+1. AIRFLOW API SERVER (v3.1.4)
+
+-----
+
+Purpose:
+Core Apache Airflow application with custom authentication integration.
+
+Key Changes from Airflow 2.x:
+
+- Architecture shift from “webserver” to “apiServer”
+- Task execution via SDK (no direct database access)
+- JWT-based API authentication
+- Enhanced security isolation
+- Improved scalability
+
+Authentication Manager:
+
+- Custom implementation extending FAB Auth Manager
+- Keycloak OIDC integration with PKCE
+- Role mapping from Keycloak groups
+- Session lifecycle management
+- Token refresh handling
+
+Configuration Highlights:
+
+- Session backend: Database-backed (not cookie-only)
+- Session lifetime: 30 minutes idle timeout
+- Token validation: JWT signature verification
+- User provisioning: Auto-creation from OIDC claims
+
+1. KEYCLOAK IDENTITY PROVIDER
+
+-----
+
+Purpose:
+Enterprise-grade identity and access management.
+
+Configuration Details:
+
+Realm Settings:
+
+- SSO Session Idle: 30 minutes
+- SSO Session Max: 10 hours
+- Offline Session Idle: 30 days
+- Access Token Lifespan: 5 minutes
+- Refresh Token Max Reuse: 0 (single use)
+
+Client Configuration:
+
+- Client Protocol: openid-connect
+- Access Type: confidential
+- Standard Flow: Enabled
+- Direct Access Grants: Disabled (more secure)
+- Authorization Code Flow + PKCE: Enabled
+- Valid Redirect URIs: https://<airflow-domain>/oauth-authorized/keycloak
+- Web Origins: https://<airflow-domain>
+
+User Federation (if applicable):
+
+- LDAP/AD integration for user sync
+- Group mapping for role assignment
+- Attribute mappers for user metadata
+
+# ================================================================================
+3. AUTHENTICATION FLOW
+
+## FIRST-TIME LOGIN SEQUENCE
+
+## Phase 1: Landing Page Access
+
+1. User navigates to https://airflow.example.com/
+1. Nginx intercepts request
+1. Nginx serves custom landing page (index.html)
+1. JavaScript checks for authentication cookies
+1. No cookies found → Display landing page
+
+## Phase 2: Authentication Initiation
+
+1. User clicks “Continue with Keycloak” button
+1. Browser navigates to /dags
+1. Nginx proxies request to Airflow
+1. Airflow Auth Manager detects no session
+1. Airflow returns 401 Unauthorized with WWW-Authenticate header
+1. Auth Manager redirects to Keycloak authorization endpoint
+
+## Phase 3: Keycloak Authentication
+
+1. User lands on Keycloak login page
+1. User enters corporate credentials (username/password)
+1. Keycloak validates credentials against user store
+1. If 2FA enabled → User completes second factor
+1. Keycloak creates authentication session
+1. Keycloak generates authorization code
+1. Keycloak redirects to Airflow callback URL with code
+
+## Phase 4: Token Exchange & Session Creation
+
+1. Airflow receives authorization code at /oauth-authorized/keycloak
+1. Airflow Auth Manager exchanges code for tokens (server-to-server)
+1. Request includes: client_id, client_secret, code, redirect_uri
+1. Keycloak validates request and returns:
+- Access Token (JWT, 5-minute expiry)
+- Refresh Token (30-minute expiry)
+- ID Token (user identity claims)
+1. Airflow validates access token signature
+1. Airflow extracts user information from ID token
+1. Airflow creates or updates user in local database
+1. Airflow maps Keycloak groups to Airflow roles
+1. Airflow creates session in database
+1. Airflow sets session cookies:
+- session: Encrypted session identifier
+- csrf_token: CSRF protection token
+- _token: JWT for API access
+1. Airflow redirects user to /dags
+
+## Phase 5: Authenticated Access
+
+1. User accesses Airflow UI with session cookies
+1. All subsequent requests include session cookies
+1. Airflow validates session on each request
+1. User can interact with DAGs, tasks, etc.
+
+## SESSION EXPIRATION SCENARIO
+
+Current Behavior (Known Issue):
+
+Idle Timeout (30 minutes):
+
+1. User remains inactive for 30+ minutes
+1. Keycloak session expires (idle timeout)
+1. Airflow session still exists in database
+1. User attempts to refresh page or navigate
+1. Airflow validates local session → appears valid
+1. Airflow attempts to use expired Keycloak token
+1. Token validation fails
+1. Airflow returns 500 Internal Server Error
+1. User sees generic error page (not user-friendly)
+
+Workaround:
+
+1. User manually clears browser cookies
+1. User navigates to root path (/)
+1. Landing page displays
+1. User clicks “Continue with Keycloak”
+1. Fresh authentication flow starts
+
+Planned Fix (See Roadmap):
+
+- Client-side session health monitoring
+- Proactive token refresh before expiration
+- Automatic cookie cleanup on detected expiration
+- Graceful redirect to landing page
+
+# ================================================================================
+4. SESSION MANAGEMENT
+
+## SESSION LIFECYCLE
+
+┌─────────────────────────────────────────────────────────────────┐
+│                     Session Creation                             │
+├─────────────────────────────────────────────────────────────────┤
+│  1. User authenticates via Keycloak                             │
+│  2. Airflow receives valid tokens                               │
+│  3. Session record created in database:                         │
+│     - session_id (UUID)                                         │
+│     - user_id (foreign key)                                     │
+│     - created_at (timestamp)                                    │
+│     - last_activity (timestamp)                                 │
+│     - expires_at (created_at + 30 minutes)                      │
+│  4. Encrypted session cookie sent to browser:                   │
+│     - HttpOnly: true (prevent XSS)                              │
+│     - Secure: true (HTTPS only)                                 │
+│     - SameSite: Lax (CSRF protection)                           │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                  Active Session (Normal Use)                     │
+├─────────────────────────────────────────────────────────────────┤
+│  For each authenticated request:                                │
+│  1. Browser sends session cookie                                │
+│  2. Airflow decrypts and validates cookie                       │
+│  3. Airflow looks up session in database                        │
+│  4. Airflow checks:                                             │
+│     - Session exists                                            │
+│     - Session not expired                                       │
+│     - last_activity within idle timeout                         │
+│  5. If valid:                                                   │
+│     - Update last_activity timestamp                            │
+│     - Extend expires_at (+30 minutes from now)                  │
+│     - Process request                                           │
+│  6. If invalid:                                                 │
+│     - Return 401 Unauthorized                                   │
+│     - Initiate re-authentication                                │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                  Session Expiration Events                       │
+├─────────────────────────────────────────────────────────────────┤
+│  Idle Timeout (30 minutes):                                     │
+│  - No activity for 30 minutes                                   │
+│  - Both Keycloak and Airflow sessions expire                    │
+│  - Next request triggers re-authentication                      │
+│                                                                  │
+│  Absolute Timeout (10 hours):                                   │
+│  - Maximum session duration regardless of activity              │
+│  - Keycloak enforces maximum session lifetime                   │
+│  - User must re-authenticate                                    │
+│                                                                  │
+│  Explicit Logout:                                               │
+│  - User clicks “Logout” in Airflow UI                           │
+│  - Airflow deletes session from database                        │
+│  - Airflow calls Keycloak logout endpoint                       │
+│  - Keycloak terminates SSO session                              │
+│  - All session cookies cleared                                  │
+│  - User redirected to landing page                              │
+│                                                                  │
+│  Admin Revocation:                                              │
+│  - Admin disables user in Keycloak                              │
+│  - Admin deletes user session in Keycloak console               │
+│  - Next Airflow request fails token validation                  │
+│  - User forced to re-authenticate (fails if disabled)           │
+└─────────────────────────────────────────────────────────────────┘
+
+## TOKEN MANAGEMENT
+
+Access Token:
+
+- Type: JWT (JSON Web Token)
+- Lifetime: 5 minutes
+- Purpose: Short-lived credential for API access
+- Contains: User ID, email, groups, permissions
+- Validation: Signature verification + expiry check
+
+Refresh Token:
+
+- Type: Opaque token (random string)
+- Lifetime: 30 minutes
+- Purpose: Obtain new access tokens without re-authentication
+- Storage: Keycloak database only (not sent to client)
+- Usage: Automatic refresh when access token expires
+
+ID Token:
+
+- Type: JWT
+- Purpose: User identity information
+- Contains: Name, email, preferred_username, groups
+- Usage: Initial user provisioning in Airflow
+
+## COOKIE SECURITY
+
+All cookies set by Airflow include security attributes:
+
+|Attribute|Value|Purpose                                         |
+|---------|-----|------------------------------------------------|
+|HttpOnly |true |Prevents JavaScript access (XSS mitigation)     |
+|Secure   |true |HTTPS transmission only                         |
+|SameSite |Lax  |CSRF protection (allows top-level navigation)   |
+|Path     |/    |Available across entire domain                  |
+|Max-Age  |1800 |30-minute expiration (aligned with idle timeout)|
+
+# ================================================================================
+5. DESIGN DECISIONS
+
+1. WHY NGINX INSTEAD OF DIRECT INGRESS TO AIRFLOW?
+
+-----
+
+Rationale:
+
+- Branding Requirements: Need to serve custom landing page before authentication
+- Routing Flexibility: Separate routes for static assets vs dynamic content
+- Decoupling: Landing page updates don’t require Airflow restart
+- Performance: Nginx efficiently serves static content with caching
+- Monitoring: Centralized logging and metrics collection point
+
+Alternatives Considered:
+
+- ❌ Airflow Flask Blueprint: Would require code changes in Airflow core
+- ❌ Ingress Rewrite Rules: Limited capability for complex routing logic
+- ✅ Nginx Sidecar: Clean separation of concerns, production-ready
+
+1. WHY NOT INTERCEPT ERRORS IN NGINX?
+
+-----
+
+Decision:
+Nginx should NOT use proxy_intercept_errors to catch 401/500 errors.
+
+Rationale:
+
+- OAuth Flow Integrity: The initial 401 from Airflow is part of the OAuth dance
+  - User not authenticated → Airflow returns 401
+  - 401 triggers redirect to Keycloak
+  - This is expected behavior, not an error to intercept
+- Prevents Breaking Changes: Intercepting all 401s would break the OAuth
+  redirect mechanism
+- Keycloak Compatibility: Keycloak expects standard OAuth error responses
+- State Management: OAuth state parameter must flow through unchanged
+
+Why This Caused Issues:
+When we tried to intercept errors in nginx:
+
+Problem Flow:
+
+1. User clicks “Continue with Keycloak”
+1. Nginx proxies to Airflow
+1. Airflow returns 401 (not authenticated) with Location header
+1. Nginx intercepts 401, treats as error
+1. Nginx serves error page or redirects to landing
+1. OAuth redirect to Keycloak never happens
+1. User stuck in loop
+
+Current Approach:
+
+Correct Flow:
+
+1. User clicks “Continue with Keycloak”
+1. Nginx proxies to Airflow (transparent proxy)
+1. Airflow returns 401 with Location: keycloak-url
+1. Browser follows redirect to Keycloak
+1. OAuth flow proceeds normally
+1. WHY CLIENT-SIDE COOKIE MANAGEMENT INSTEAD OF SERVER-SIDE?
+
+-----
+
+Decision:
+Handle expired session detection and cookie cleanup in JavaScript (client-side).
+
+Rationale:
+
+- Context Awareness: JavaScript can inspect cookies before making requests
+- Proactive Handling: Can detect and clean up expired sessions before errors occur
+- User Experience: Seamless cleanup without round-trip to server
+- No Server Impact: Doesn’t require Airflow code changes
+
+Implementation Strategy:
+
+- Detect presence of authentication cookies on page load
+- If on landing page with cookies → attempt redirect to /dags
+- If redirect fails (session expired) → Airflow handles re-authentication
+- Periodic health checks (every 2-5 minutes) to detect expiration early
+- Automatic cleanup of expired cookies before user experiences errors
+
+1. WHY SEPARATE CONFIGMAPS FOR NGINX.CONF AND INDEX.HTML?
+
+-----
+
+Decision:
+Use two separate Kubernetes ConfigMaps instead of one combined.
+
+Rationale:
+
+- Separation of Concerns: Configuration logic vs presentation content
+- Update Frequency: HTML may change more often than nginx config
+- Rollback Capability: Can independently rollback HTML or config changes
+- Team Ownership: Frontend team owns HTML, platform team owns nginx config
+- Testing: Easier to test HTML changes in isolation
+
+Mount Strategy:
+nginx.conf → /etc/nginx/conf.d/default.conf
+index.html → /usr/share/nginx/html/index.html
+assets/    → /usr/share/nginx/html/assets/
+
+1. WHY DATABASE SESSION BACKEND INSTEAD OF SECURE COOKIE?
+
+-----
+
+Decision:
+Use database-backed sessions (FAB provider default) rather than client-side
+secure cookie sessions.
+
+Rationale:
+
+- Immediate Revocation: Admin can delete session in database for instant logout
+- Audit Trail: Full session history stored in database
+- Token Storage: Refresh tokens never leave server
+- Size Limits: No cookie size constraints (4KB limit on cookies)
+- Multi-Instance: Shared session state across multiple Airflow instances
+
+Trade-offs:
+
+- ✅ Better security and control
+- ✅ Supports session revocation
+- ❌ Requires database cleanup (run airflow db clean –table session periodically)
+- ❌ Slightly higher latency (database lookup per request)
+
+# ================================================================================
+6. DEPLOYMENT STRATEGY
+
+## KUBERNETES ARCHITECTURE
+
+Namespace: astronomer-ap3877-hprd-s7b7a818
+
+Deployment: airflow-webserver (modified with nginx sidecar)
+├── Container: airflow-webserver
+│   ├── Image: quay.io/astronomer/ap-airflow:3.1.4-python-3.11
+│   ├── Port: 8080 (internal only)
+│   └── Environment Variables:
+│       ├── AIRFLOW__CORE__AUTH_MANAGER
+│       ├── AIRFLOW__API__SECRET_KEY
+│       ├── CLIENT_ID (from Secret)
+│       ├── CLIENT_SECRET (from Secret)
+│       └── OIDC_ISSUER (from Secret)
+│
+└── Container: nginx-proxy
+├── Image: nginx:1.25-alpine
+├── Port: 8080 (exposed via Service)
+├── Volume Mounts:
+│   ├── nginx-config → /etc/nginx/conf.d/
+│   └── landing-page → /usr/share/nginx/html/
+└── Resources:
+├── Requests: CPU 100m, Memory 128Mi
+└── Limits: CPU 500m, Memory 256Mi
+
+Service: airflow-webserver
+├── Type: ClusterIP
+├── Port: 8080 → TargetPort: 8080 (nginx container)
+└── Selector: component=webserver
+
+Ingress: airflow-ingress
+├── Host: astronomer-ap3877-dev-81554669.data.cloud.net.intra
+├── TLS: Enabled (cert from cert-manager or manual)
+└── Backend: airflow-webserver:8080
+
+ConfigMap: nginx-landing-config
+└── Data: nginx.conf
+
+ConfigMap: nginx-landing-html
+└── Data:
+├── index.html
+└── assets/ (if any)
+
+Secret: airflow-keycloak-secrets
+└── Data:
+├── CLIENT_ID
+├── CLIENT_SECRET
+└── OIDC_ISSUER
+
+Secret: airflow-secrets
+└── Data:
+└── api-secret-key
+
+## DEPLOYMENT PROCESS
+
+Prerequisites:
+
+- Kubernetes cluster with Astronomer Operator installed
+- Keycloak instance accessible from cluster
+- Valid TLS certificate for Airflow domain
+- PostgreSQL database for Airflow metadata
+
+Deployment Steps:
+
+1. Create Secrets (one-time setup)
+1. Create ConfigMaps (HTML and nginx config)
+1. Update Astronomer Deployment (add nginx sidecar)
+1. Apply Configuration (via Astronomer CLI or Helm)
+1. Verify Deployment (health checks and smoke tests)
+1. Monitor Rollout (watch pod status and logs)
+
+Update Strategy:
+
+- HTML Changes: Update ConfigMap → Rolling restart of webserver pods
+- Nginx Config: Update ConfigMap → Rolling restart of webserver pods
+- Airflow Config: Update values.yaml → Full deployment upgrade
+- Secrets Rotation: Update Secret → Rolling restart (if needed)
+
+Rollback Plan:
+
+1. Identify problematic version
+1. Revert to previous ConfigMap version:
+   kubectl rollout undo deployment/airflow-webserver
+1. Verify rollback successful
+1. Investigate root cause in dev environment
+
+## HIGH AVAILABILITY CONSIDERATIONS
+
+Airflow Webserver:
+
+- Multiple replicas (typically 2-3)
+- Anti-affinity rules (spread across nodes)
+- Rolling update strategy (maxUnavailable: 0)
+- PodDisruptionBudget (minAvailable: 1)
+
+Session Persistence:
+
+- Database-backed sessions (shared across replicas)
+- No sticky sessions required at load balancer
+- Consistent user experience regardless of pod
+
+Nginx Sidecar:
+
+- Stateless (no local state)
+- Shares pod lifecycle with Airflow container
+- Restarts don’t impact user sessions (database-backed)
+
+# ================================================================================
+7. SECURITY CONSIDERATIONS
+
+## THREAT MODEL
+
+Assets:
+
+- User credentials (protected by Keycloak)
+- Session tokens (encrypted cookies)
+- Airflow metadata (DAGs, connections, variables)
+- Infrastructure access (Kubernetes, databases)
+
+Threats Mitigated:
+
+|Threat           |Mitigation            |Implementation                  |
+|-----------------|----------------------|--------------------------------|
+|Credential Theft |No plaintext passwords|Keycloak OIDC (external auth)   |
+|Session Hijacking|Encrypted, signed     |HttpOnly, Secure, SameSite flags|
+
+```
+                | cookies               |
+```
+
+XSS Attacks         | Cookie protection     | HttpOnly prevents JavaScript access
+CSRF Attacks        | Token validation      | SameSite=Lax + CSRF tokens
+Man-in-the-Middle   | Encrypted transit     | TLS 1.2+ for all connections
+Token Replay        | Short-lived tokens    | 5-minute access token expiry
+Privilege Escalation| Role-based access     | Keycloak group → Airflow role mapping
+SQL Injection       | ORM usage             | SQLAlchemy with parameterized queries
+
+## SECURITY BEST PRACTICES
+
+Secrets Management:
+
+- ✅ All secrets stored in Kubernetes Secrets (base64 encoded at rest)
+- ✅ Consider integrating HashiCorp Vault for enhanced secret management
+- ✅ Rotate client secrets quarterly
+- ✅ Use different credentials for dev/staging/prod
+- ❌ Never commit secrets to version control
+- ❌ Never log sensitive information (tokens, passwords)
+
+Network Security:
+
+- ✅ All external communication over TLS
+- ✅ Keycloak requires HTTPS (no HTTP fallback)
+- ✅ Internal cluster communication encrypted (if service mesh enabled)
+- ✅ Network policies to restrict pod-to-pod communication
+- ✅ Firewall rules to limit Keycloak access to trusted networks
+
+Session Security:
+
+- ✅ Idle timeout: 30 minutes (balance security vs usability)
+- ✅ Absolute timeout: 10 hours (force re-auth daily)
+- ✅ Single-use refresh tokens (prevent replay attacks)
+- ✅ Session stored in database (not just cookie)
+- ✅ Admin can revoke sessions immediately
+
+Access Control:
+
+- ✅ Principle of least privilege
+- ✅ Role-based access control (RBAC)
+- ✅ Keycloak groups mapped to Airflow roles:
+  - airflow_admin → Admin (full access)
+  - airflow_op → Op (operational access)
+  - airflow_user → User (read/write DAGs)
+  - airflow_viewer → Viewer (read-only)
+- ✅ Separate service accounts for automation
+- ✅ Audit logs for all authentication events
+
+## COMPLIANCE CONSIDERATIONS
+
+GDPR (if applicable):
+
+- User consent for session cookies (considered functional, may be exempt)
+- Right to be forgotten (delete user from Keycloak → cascades to Airflow)
+- Data minimization (only store necessary user attributes)
+- Encryption at rest and in transit
+
+SOX / Financial Regulations:
+
+- Audit trail of all user actions
+- Separation of duties (different roles for dev/ops/admin)
+- Change management process for production deployments
+- Regular access reviews (quarterly)
+
+Internal Security Policies:
+
+- Annual security audits
+- Penetration testing before major releases
+- Vulnerability scanning of container images
+- Security incident response plan
+
+# ================================================================================
+8. KNOWN ISSUES
+
+1. INTERNAL SERVER ERROR AFTER SESSION EXPIRATION
+
+-----
+
+Status: 🔴 Known Issue (High Priority)
+
+Symptom:
+
+- User experiences 30+ minutes of inactivity
+- User refreshes page or navigates to a new page
+- User sees “Internal Server Error” message
+- Error persists until cookies are manually cleared
+
+Root Cause:
+Session expiration handling is not seamless:
+
+1. Keycloak session expires (30-minute idle timeout)
+1. Airflow session still exists in database
+1. User’s browser still has session cookies
+1. Airflow attempts to validate expired Keycloak token
+1. Token validation fails (HTTP 401 from Keycloak)
+1. Airflow’s error handler returns generic 500 error
+1. No automatic cleanup or redirect to login
+
+Impact:
+
+- Poor user experience (requires manual intervention)
+- Potential loss of unsaved work
+- Confusion about authentication state
+- Support tickets from frustrated users
+
+Current Workaround:
+Manual Steps:
+
+1. Open browser developer tools (F12)
+1. Navigate to Application → Cookies
+1. Delete all cookies for the Airflow domain
+1. Navigate to root path (/)
+1. Landing page displays
+1. Click “Continue with Keycloak”
+1. Complete authentication flow
+
+Planned Fix (Q1 2025):
+
+- Implement client-side session health monitoring
+- Add JavaScript to detect expired cookies
+- Automatically clear cookies when expiration detected
+- Redirect user to landing page with informative message
+- Add “Session Expired” notification to user
+
+1. NO PROACTIVE TOKEN REFRESH
+
+-----
+
+Status: 🟡 Enhancement Needed (Medium Priority)
+
+Symptom:
+
+- User working actively in Airflow
+- Every 5 minutes, brief interruption as token refreshes
+- Occasional “Unauthorized” flashes during token refresh window
+- Refresh happens synchronously during user action
+
+Root Cause:
+
+- Access tokens expire after 5 minutes
+- Refresh happens reactively (when request fails with 401)
+- No background refresh before expiration
+- User experiences disruption during refresh process
+
+Impact:
+
+- Slightly degraded user experience during active use
+- Visible “blips” when token expires mid-action
+- Possible race conditions in multi-tab scenarios
+
+Planned Enhancement (Q2 2025):
+
+- Background JavaScript timer to refresh tokens proactively
+- Refresh 1 minute before expiration (at 4-minute mark)
+- Silent refresh in background (no user interruption)
+- Fallback to reactive refresh if proactive fails
+
+1. MULTI-TAB SESSION SYNCHRONIZATION
+
+-----
+
+Status: 🟡 Known Limitation (Low Priority)
+
+Symptom:
+
+- User opens Airflow in multiple browser tabs
+- User logs out in one tab
+- Other tabs still appear authenticated
+- Other tabs show errors when attempting actions
+
+Root Cause:
+
+- Session state not synchronized across browser tabs
+- Logout in one tab doesn’t invalidate cookies in other tabs
+- Each tab has independent JavaScript context
+- No cross-tab communication mechanism
+
+Impact:
+
+- Confusion about authentication state
+- Unexpected errors in inactive tabs
+- Requires manual refresh of all tabs
+
+Possible Solution (Future):
+
+- Implement BroadcastChannel API for tab communication
+- Listen for logout events across tabs
+- Automatically refresh or show notification in other tabs
+- Alternative: Use SharedWorker for shared session management
+
+# ================================================================================
+9. TROUBLESHOOTING GUIDE
+
+## DIAGNOSTIC COMMANDS
+
+Check nginx proxy logs:
+kubectl logs deployment/airflow-webserver -c nginx-proxy   
+-n astronomer-ap3877-hprd-s7b7a818 –tail=100
+
+Check Airflow webserver logs:
+kubectl logs deployment/airflow-webserver -c airflow-webserver   
+-n astronomer-ap3877-hprd-s7b7a818 –tail=100
+
+Verify ConfigMaps:
+kubectl get configmap nginx-landing-config   
+-n astronomer-ap3877-hprd-s7b7a818 -o yaml
+kubectl get configmap nginx-landing-html   
+-n astronomer-ap3877-hprd-s7b7a818 -o yaml
+
+Check secrets (values will be base64 encoded):
+kubectl get secret airflow-keycloak-secrets   
+-n astronomer-ap3877-hprd-s7b7a818 -o yaml
+
+Test connectivity to Keycloak from Airflow pod:
+kubectl exec -it deployment/airflow-webserver -c airflow-webserver   
+-n astronomer-ap3877-hprd-s7b7a818 –   
+curl -v https://keycloak.example.com/auth/realms/your-realm/.well-known/openid-configuration
+
+Check service endpoints:
+kubectl get endpoints airflow-webserver -n astronomer-ap3877-hprd-s7b7a818
+
+## COMMON ISSUES & SOLUTIONS
+
+## Issue: “Internal Server Error” on login attempt
+
+Diagnosis:
+Check Airflow logs for authentication errors:
+kubectl logs deployment/airflow-webserver -c airflow-webserver   
+-n <namespace> | grep -i “auth|oidc|keycloak”
+
+Possible Causes:
+
+1. Incorrect Keycloak client credentials
+1. Keycloak server unreachable from cluster
+1. Redirect URI mismatch
+1. Token validation failure
+
+Solutions:
+
+1. Verify CLIENT_ID and CLIENT_SECRET in secret
+1. Test Keycloak connectivity (see diagnostic commands)
+1. Check Keycloak client configuration:
+- Valid Redirect URIs: https://your-airflow-domain.com/oauth-authorized/keycloak
+- Web Origins: https://your-airflow-domain.com
+1. Check Airflow logs for specific error message
+
+## Issue: Infinite redirect loop between Airflow and Keycloak
+
+Diagnosis:
+
+- Browser dev tools → Network tab
+- Look for repeated redirects between domains
+- Check redirect URLs and parameters
+
+Possible Causes:
+
+1. Session cookie not being set
+1. Cookie domain mismatch
+1. SameSite policy too strict
+1. HTTPS/HTTP mixed content
+
+Solutions:
+
+1. Verify nginx proxy headers:
+   X-Forwarded-Proto: https
+   X-Forwarded-Host: correct-domain.com
+1. Check cookie attributes in browser dev tools:
+- Secure: true (only if using HTTPS)
+- SameSite: Lax (not Strict)
+- Domain: matches Airflow domain
+1. Ensure all URLs use HTTPS consistently
+1. Check Keycloak logs for failed token exchanges
+
+## Issue: Landing page shows but “Continue” button doesn’t work
+
+Diagnosis:
+Check nginx routing:
+kubectl logs deployment/airflow-webserver -c nginx-proxy   
+-n <namespace> | grep “GET /dags”
+
+Verify Airflow is receiving requests:
+kubectl logs deployment/airflow-webserver -c airflow-webserver   
+-n <namespace> | grep “GET /dags”
+
+Possible Causes:
+
+1. Nginx proxy_pass incorrect
+1. Airflow service not reachable
+1. Firewall blocking internal communication
+
+Solutions:
+
+1. Verify service exists and has endpoints:
+   kubectl get service airflow-webserver -n <namespace>
+   kubectl get endpoints airflow-webserver -n <namespace>
+1. Test internal connectivity:
+   kubectl run -it –rm debug –image=curlimages/curl –restart=Never –   
+   curl -v http://airflow-webserver:8080/health
+1. Check nginx.conf proxy_pass directive
+
+## Issue: CSS/styling not loading on landing page
+
+Diagnosis:
+
+- Browser dev tools → Console tab
+- Look for 404 errors on asset requests
+- Check Network tab for failed CSS/font loads
+
+Possible Causes:
+
+1. Assets not in ConfigMap
+1. Incorrect nginx location block for /assets/
+1. Wrong file paths in HTML
+
+Solutions:
+
+1. Verify assets in ConfigMap:
+   kubectl describe configmap nginx-landing-html -n <namespace>
+1. Check nginx location /assets/ block
+1. Verify asset paths in index.html (should be relative /assets/…)
+1. Clear browser cache and hard refresh (Ctrl+Shift+R)
+
+## Issue: User gets 403 Forbidden after successful login
+
+Diagnosis:
+Check Airflow logs for authorization errors:
+kubectl logs deployment/airflow-webserver -c airflow-webserver   
+-n <namespace> | grep -i “403|forbidden|unauthorized”
+
+Possible Causes:
+
+1. User not assigned to any Keycloak groups
+1. Role mapping not configured in Airflow
+1. User lacks permissions for requested resource
+
+Solutions:
+
+1. In Keycloak:
+- Verify user is member of appropriate groups
+- Common groups: airflow_admin, airflow_op, airflow_user, airflow_viewer
+1. In Airflow Auth Manager configuration:
+- Verify role mapping from Keycloak groups to Airflow roles
+- Check webserver_config.py or custom auth manager code
+1. Check Airflow UI → Security → List Users
+- Verify user exists and has correct roles assigned
+1. If user doesn’t exist:
+- Logout and login again
+- Check auth manager user provisioning code
+
+## PERFORMANCE TROUBLESHOOTING
+
+## Issue: Slow authentication flow
+
+Diagnosis:
+
+- Browser dev tools → Network tab → Timeline
+- Identify which step takes longest
+- Check server response times
+
+Typical Timings (for reference):
+
+- Landing page load: < 200ms
+- Initial auth redirect: < 500ms
+- Keycloak login page: < 1000ms
+- Token exchange: < 500ms
+- Airflow UI load: < 2000ms
+
+Optimization Areas:
+
+If Keycloak slow:
+
+- Check Keycloak server resources (CPU/memory)
+- Verify database performance (connection pool)
+- Consider caching user federation lookups
+
+If Airflow slow:
+
+- Check database connection pool settings
+- Monitor database query performance
+- Verify adequate resources (CPU/memory)
+- Check for DAG parsing bottlenecks
+
+If network slow:
+
+- Verify low latency between components
+- Check for DNS resolution delays
+- Ensure adequate bandwidth
+
+# ================================================================================
+10. FUTURE ENHANCEMENTS
+
+## ROADMAP (PRIORITIZED)
+
+## Q1 2025: Session Management Improvements
+
+Priority: High
+
+Features:
+
+1. Automatic Cookie Cleanup
+- Detect expired sessions client-side
+- Auto-clear cookies when expiration detected
+- Redirect to landing page with informative message
+1. Proactive Token Refresh
+- Background refresh 1 minute before expiration
+- Silent refresh without user interruption
+- Fallback to reactive refresh if needed
+1. Session Expiration Notification
+- Show countdown timer before expiration
+- Warning notification at 5 minutes remaining
+- Grace period for user to extend session
+
+Expected Impact:
+
+- Eliminate “Internal Server Error” on expired sessions
+- Seamless experience during active use
+- Reduced support tickets and user frustration
+
+## Q2 2025: Enhanced Monitoring & Observability
+
+Priority: Medium
+
+Features:
+
+1. Authentication Metrics Dashboard
+- Login success/failure rates
+- Average authentication duration
+- Active session count
+- Token refresh frequency
+1. User Activity Tracking
+- Last login timestamp
+- Session duration statistics
+- Feature usage analytics
+- Error rate per user
+1. Alerting Rules
+- High authentication failure rate
+- Unusual login patterns
+- Session expiration spikes
+- Keycloak connectivity issues
+
+Expected Impact:
+
+- Proactive issue detection
+- Better understanding of user behavior
+- Data-driven optimization decisions
+
+## Q3 2025: Multi-Tenant Enhancements
+
+Priority: Low
+
+Features:
+
+1. Tenant-Specific Branding
+- Dynamic logo/colors based on realm
+- Custom welcome messages per tenant
+- Tenant-specific terms of service
+1. Realm Selection Page
+- Allow user to choose authentication realm
+- Remember realm preference in cookie
+- Support for external user federation
+1. Isolated Session Management
+- Separate session stores per tenant
+- Tenant-specific timeout policies
+- Cross-realm logout prevention
+
+Expected Impact:
+
+- Support for multiple business units
+- Better multi-org deployment flexibility
+- Improved security isolation
+
+## Q4 2025: Advanced Security Features
+
+Priority: Medium
+
+Features:
+
+1. Adaptive Authentication
+- Risk-based MFA prompts
+- Device fingerprinting
+- Anomaly detection (unusual locations/times)
+1. Session Replay Protection
+- CSRF token rotation
+- Request signing with nonce
+- Timestamp validation
+1. Audit Trail Enhancements
+- Immutable audit logs
+- Real-time audit log streaming
+- Compliance report generation
+
+Expected Impact:
+
+- Enhanced security posture
+- Better compliance coverage
+- Reduced risk of credential abuse
+
+## LONG-TERM VISION
+
+Goal:
+Provide enterprise-grade, zero-friction authentication experience for Apache
+Airflow deployments.
+
+Key Principles:
+
+- Security First: Never compromise security for convenience
+- User-Centric: Minimize authentication friction
+- Observable: Full visibility into auth flow health
+- Extensible: Easy integration of new auth providers
+- Maintainable: Simple architecture, well-documented
+
+# ================================================================================
+11. MONITORING & HEALTH CHECKS
+
+## KEY METRICS
+
+Authentication Metrics:
+
+- Login success rate (target: > 99%)
+- Login failure rate (monitor for spikes)
+- Average authentication duration (target: < 5 seconds)
+- Token refresh success rate (target: > 99.9%)
+
+Session Metrics:
+
+- Active sessions count
+- Average session duration
+- Session expiration events per hour
+- Forced logout events (admin revocation)
+
+System Health:
+
+- Nginx response time (target: < 100ms)
+- Airflow webserver response time (target: < 500ms)
+- Keycloak response time (target: < 300ms)
+- Database connection pool utilization
+
+Error Rates:
+
+- HTTP 401 (authentication required)
+- HTTP 403 (forbidden)
+- HTTP 500 (internal server errors)
+- OAuth errors (invalid_grant, invalid_token, etc.)
+
+## HEALTH CHECK ENDPOINTS
+
+Nginx Health:
+GET /health
+Expected: 200 OK “healthy”
+Purpose: Kubernetes liveness probe
+
+Airflow Health:
+GET /health (proxied through nginx)
+Expected: 200 OK with JSON health status
+Purpose: Application readiness check
+
+Keycloak Health (if accessible):
+GET /auth/realms/<realm>/.well-known/openid-configuration
+Expected: 200 OK with OIDC configuration
+Purpose: Verify Keycloak availability
+
+## LOGGING STRATEGY
+
+Log Levels:
+
+- ERROR: Authentication failures, token validation errors, 500 responses
+- WARN: Session expirations, retry attempts, deprecated API usage
+- INFO: Successful logins, logouts, token refreshes
+- DEBUG: Detailed OAuth flow, token contents (sanitized), session lifecycle
+
+Log Aggregation:
+
+- Collect logs from all pods (nginx + airflow + keycloak)
+- Centralize in ELK stack, Splunk, or CloudWatch
+- Retain logs for minimum 90 days (compliance requirement)
+
+Log Queries (Example for ELK):
+
+Failed authentication attempts:
+level:ERROR AND message:“authentication failed”
+
+Specific user activity:
+user_id:“john.doe@example.com”
+
+Session expiration events:
+message:“session expired” OR message:“idle timeout”
+
+OAuth errors:
+oauth_error:* OR oidc_error:*
+
+# ================================================================================
+12. SUPPORT & MAINTENANCE
+
+## REGULAR MAINTENANCE TASKS
+
+Daily:
+
+- Monitor authentication success rates
+- Review error logs for anomalies
+- Check active session count
+
+Weekly:
+
+- Clean up expired sessions in database:
+  kubectl exec deployment/airflow-scheduler –   
+  airflow db clean –table session   
+  –clean-before-timestamp $(date -d ‘7 days ago’ -I)
+- Review and acknowledge monitoring alerts
+- Update documentation if processes changed
+
+Monthly:
+
+- Rotate client secrets (if policy requires)
+- Review access logs for unusual patterns
+- Update dependencies (nginx, Airflow, providers)
+- Conduct access review (verify user roles)
+
+Quarterly:
+
+- Security audit of authentication flow
+- Performance testing under load
+- Review and update threat model
+- Disaster recovery drill
+
+## INCIDENT RESPONSE
+
+Authentication Outage:
+
+Priority: P1 (Critical)
+
+1. Verify Scope:
+- All users affected or subset?
+- Specific realm or all realms?
+- Keycloak up or down?
+1. Immediate Actions:
+- Check Keycloak health
+- Verify network connectivity
+- Check certificate expiration
+- Review recent changes (rollback if needed)
+1. Communication:
+- Notify users via status page
+- Update every 15 minutes until resolved
+- Post-mortem within 24 hours
+1. Escalation:
+- 15 minutes: Engage Keycloak team
+- 30 minutes: Engage management
+- 1 hour: Engage vendor support (if applicable)
+
+Session Hijacking Suspected:
+
+Priority: P1 (Security Incident)
+
+1. Immediate Actions:
+- Identify affected user(s)
+- Revoke all sessions for affected users
+- Force password reset
+- Review audit logs for suspicious activity
+1. Investigation:
+- Determine attack vector
+- Identify compromised credentials
+- Check for lateral movement
+1. Remediation:
+- Patch vulnerabilities if found
+- Enhance monitoring
+- Update security policies
+1. Post-Incident:
+- Document findings
+- Update threat model
+- Conduct lessons learned session
+
+## CONTACT INFORMATION
+
+Internal Teams:
+
+- DataHub OaaS Team: datahub-oaas@bnpparibas.com
+- Platform Engineering: platform-eng@bnpparibas.com
+- Security Operations: security-ops@bnpparibas.com
+- Identity & Access Management: iam-team@bnpparibas.com
+
+Escalation Path:
+
+1. Level 1: On-call engineer (PagerDuty)
+1. Level 2: Team lead / Senior engineer
+1. Level 3: Platform architect / Security team
+1. Level 4: VP Engineering / CISO
+
+External Support:
+
+- Astronomer Support: support@astronomer.io
+- Keycloak Community: https://www.keycloak.org/support
+- Airflow Dev List: dev@airflow.apache.org
+
+# ================================================================================
+13. GLOSSARY
+
+Access Token:
+Short-lived JWT (5 minutes) used to authenticate API requests to Airflow.
+
+Authorization Code:
+One-time code returned by Keycloak after successful authentication, exchanged
+for tokens.
+
+Client ID:
+Public identifier for the Airflow application in Keycloak (e.g., “airflow-client”).
+
+Client Secret:
+Confidential password known only to Airflow and Keycloak, used to authenticate
+the application.
+
+CSRF Token:
+Cross-Site Request Forgery protection token included in forms and AJAX requests.
+
+ID Token:
+JWT containing user identity information (name, email, groups) returned by Keycloak.
+
+Keycloak:
+Open-source identity and access management solution providing OIDC/SAML authentication.
+
+OAuth 2.0:
+Industry-standard protocol for authorization.
+
+OIDC (OpenID Connect):
+Authentication layer built on top of OAuth 2.0.
+
+PKCE (Proof Key for Code Exchange):
+Security extension for OAuth protecting against authorization code interception attacks.
+
+Realm:
+Isolated tenant/namespace in Keycloak containing users, clients, and configuration.
+
+Refresh Token:
+Longer-lived token (30 minutes) used to obtain new access tokens without
+re-authentication.
+
+Session:
+Server-side state tracking authenticated user, stored in database.
+
+Session Cookie:
+Encrypted HTTP cookie sent by browser to prove session ownership.
+
+SSO (Single Sign-On):
+Authentication architecture allowing one login for multiple applications.
+
+Token Exchange:
+Process of trading authorization code for access/refresh/ID tokens.
+
+# ================================================================================
+14. APPENDIX
+
+## RELATED DOCUMENTATION
+
+- Apache Airflow Official Docs: https://airflow.apache.org/docs/
+- Airflow 3.x Migration Guide:
+  https://airflow.apache.org/docs/apache-airflow/stable/installation/upgrading_to_airflow3.html
+- Keycloak Documentation: https://www.keycloak.org/documentation
+- OAuth 2.0 RFC 6749: https://datatracker.ietf.org/doc/html/rfc6749
+- OpenID Connect Specification: https://openid.net/connect/
+- PKCE RFC 7636: https://datatracker.ietf.org/doc/html/rfc7636
+
+## CONFIGURATION REFERENCE
+
+Airflow 3.x Configuration Changes:
+
+- [webserver] section → [fab] for session management
+- AIRFLOW__WEBSERVER__* → AIRFLOW__FAB__* environment variables
+- Webserver command → airflow api-server command
+- Direct database access → SDK-based execution
+
+Keycloak Client Configuration:
+
+- Client Protocol: openid-connect
+- Access Type: confidential
+- Standard Flow Enabled: ON
+- Implicit Flow Enabled: OFF
+- Direct Access Grants Enabled: OFF
+- Service Accounts Enabled: OFF
+- Authorization Enabled: OFF
+- Valid Redirect URIs: https://<airflow-url>/oauth-authorized/keycloak
+- Web Origins: https://<airflow-url>
+- Backchannel Logout: OFF (not used)
+
+## VERSION HISTORY
+
+|Version|Date      |Changes                                      |
+|-------|----------|---------------------------------------------|
+|1.0.0  |2024-12-26|Initial implementation with Airflow 3.1.4 and|
+
+```
+    |            | Keycloak OIDC
+```
+
+1.1.0   | 2025-01-15 | Added dynamic copyright year feature
+1.2.0   | TBD        | Planned: Automatic cookie cleanup on session expiration
+
+# ================================================================================
+DOCUMENT INFORMATION
+
+Last Updated: December 26, 2024
+Author: DataHub OaaS Team
+Reviewers: Platform Engineering, Security Team
+Classification: Internal Use Only
+Next Review Date: March 26, 2025
+
+# ================================================================================
+Copyright © 2025 BNP Paribas. All rights reserved.
