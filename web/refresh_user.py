@@ -1,44 +1,34 @@
-def refresh_user(self, *, user):
-    """
-    Override critique pour éviter les 500 Internal Server Error
-    quand le refresh_token Keycloak est expiré ou invalide.
+import logging
+from keycloak.exceptions import KeycloakPostError
+from fastapi import HTTPException, status
 
-    Règle Airflow:
-    - refresh_user() DOIT retourner un user ou None
-    - refresh_user() NE DOIT JAMAIS lever d’exception
-    """
+log = logging.getLogger(__name__)
 
-    try:
-        # Appel du comportement standard du provider Keycloak
-        return super().refresh_user(user=user)
+class OidcKeycloakAuthManager(KeycloakAuthManager):
 
-    except KeycloakPostError as exc:
-        # Cas NORMAL: refresh_token expiré / invalid_grant
-        log.warning(
-            "Keycloak refresh failed (invalid_grant). Forcing re-login: %s",
-            exc,
-        )
-
-        # Nettoyage défensif pour éviter toute boucle
+    def refresh_user(self, user):
         try:
-            user.access_token = ""
-            user.refresh_token = ""
+            return super().refresh_user(user=user)
+
+        except KeycloakPostError as exc:
+            # Keycloak refuses refresh: refresh token no longer active
+            if exc.response_code == 400 and b"invalid_grant" in exc.response_body:
+                log.warning(
+                    "Keycloak refresh failed (invalid_grant). Forcing re-login."
+                )
+                # IMPORTANT: raise 401 so Airflow triggers auth flow instead of RBAC 403
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Session expired. Please re-authenticate.",
+                )
+
+            # Other KeycloakPostError: let it bubble (or handle specifically if you want)
+            raise
+
         except Exception:
-            pass
-
-        # IMPORTANT: None = session expirée => Airflow relance l’auth
-        return None
-
-    except Exception:
-        # Sécurité absolue: aucune exception ne doit sortir d’ici
-        log.exception(
-            "Unexpected error during refresh_user. Forcing re-login."
-        )
-
-        try:
-            user.access_token = ""
-            user.refresh_token = ""
-        except Exception:
-            pass
-
-        return None
+            # Conservative: avoid 500 loops
+            log.exception("Unexpected error during refresh_user; forcing re-login.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session error. Please re-authenticate.",
+            )
