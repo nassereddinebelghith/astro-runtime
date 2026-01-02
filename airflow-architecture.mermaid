@@ -1,0 +1,85 @@
+flowchart TB
+    subgraph External["🌐 External Access"]
+        User["👤 User"]
+        Browser["🌐 Web Browser"]
+    end
+
+    subgraph Kubernetes["☸️ Kubernetes Cluster"]
+        
+        subgraph Ingress["🔀 Ingress Layer"]
+            IngressController["📡 Ingress Controller<br/><small>airflow.example.com</small>"]
+        end
+        
+        subgraph PreLoginLayer["🎨 Pre-Login Layer"]
+            PreLoginSvc["⚙️ Service: prelogin<br/><small>ClusterIP:8080</small>"]
+            
+            subgraph PreLoginPod["📦 Pre-Login Pod"]
+                Nginx["🔧 Nginx<br/><small>Port 8080</small>"]
+                StaticHTML["📄 index.html<br/><small>Static branding page</small>"]
+                NginxConfig["⚙️ nginx.conf<br/><small>- Serves / → index.html<br/>- Serves /assets/ → static files<br/>- Proxy /* → Airflow webserver</small>"]
+            end
+        end
+        
+        subgraph AirflowLayer["✈️ Airflow 3.1.4 Layer"]
+            WebSvc["⚙️ Service: airflow-webserver<br/><small>ClusterIP:8080</small>"]
+            
+            subgraph WebPod["📦 Airflow Webserver Pod"]
+                AirflowWeb["🌐 Airflow Webserver<br/><small>v3.1.4 (Astronomer Runtime)</small>"]
+                CustomAuthManager["🔐 Custom Auth Manager<br/><small>Keycloak OIDC</small>"]
+                RoleMapper["🗺️ Role Mapping Logic<br/><small>Environment variable:<br/>ROLE_MAPPING</small>"]
+            end
+        end
+    end
+    
+    subgraph Keycloak["🔑 Keycloak (OIDC Provider)"]
+        KeycloakServer["🔐 Keycloak Server<br/><small>Identity Provider</small>"]
+        KeycloakGroups["👥 LDAP/Keycloak Groups"]
+    end
+    
+    %% Authentication Flow
+    User -->|"1️⃣ HTTPS Access"| Browser
+    Browser -->|"2️⃣ GET /"| IngressController
+    IngressController -->|"3️⃣ Route to prelogin"| PreLoginSvc
+    PreLoginSvc -->|"4️⃣"| Nginx
+    
+    Nginx -->|"5️⃣ Serve static page"| StaticHTML
+    StaticHTML -.->|"6️⃣ HTML page displayed"| Browser
+    
+    Browser -->|"7️⃣ Click 'Login'<br/>Redirect to /login"| IngressController
+    IngressController -->|"8️⃣"| PreLoginSvc
+    PreLoginSvc -->|"9️⃣"| Nginx
+    
+    Nginx -->|"🔟 Proxy to Airflow"| WebSvc
+    WebSvc -->|"1️⃣1️⃣"| AirflowWeb
+    
+    AirflowWeb -->|"1️⃣2️⃣ Detect unauthenticated user<br/>Initiate OIDC flow"| CustomAuthManager
+    CustomAuthManager -->|"1️⃣3️⃣ Redirect to /oauth/authorize"| KeycloakServer
+    
+    KeycloakServer -.->|"1️⃣4️⃣ Keycloak login page"| Browser
+    Browser -->|"1️⃣5️⃣ Credentials"| KeycloakServer
+    
+    KeycloakServer -->|"1️⃣6️⃣ Callback with auth code<br/>/oauth-authorized"| CustomAuthManager
+    CustomAuthManager -->|"1️⃣7️⃣ Exchange code for tokens"| KeycloakServer
+    KeycloakServer -->|"1️⃣8️⃣ Access Token + ID Token<br/>(contains user groups)"| CustomAuthManager
+    
+    CustomAuthManager -->|"1️⃣9️⃣ Extract groups<br/>from token"| RoleMapper
+    KeycloakGroups -.->|"Groups included<br/>in token"| CustomAuthManager
+    
+    RoleMapper -->|"2️⃣0️⃣ Map group → Airflow role<br/><small>Admin, Op, Viewer, User, Public</small>"| AirflowWeb
+    
+    AirflowWeb -.->|"2️⃣1️⃣ Session created<br/>Redirect to /home"| Browser
+    Browser -.->|"2️⃣2️⃣ Access granted per role"| AirflowWeb
+
+    %% Styles
+    classDef userStyle fill:#e1f5ff,stroke:#01579b,stroke-width:2px,color:#000
+    classDef ingressStyle fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef preloginStyle fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
+    classDef airflowStyle fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000
+    classDef keycloakStyle fill:#fce4ec,stroke:#880e4f,stroke-width:2px,color:#000
+    classDef componentStyle fill:#fff,stroke:#666,stroke-width:1px,color:#000
+    
+    class User,Browser userStyle
+    class IngressController ingressStyle
+    class PreLoginSvc,Nginx,StaticHTML,NginxConfig preloginStyle
+    class WebSvc,AirflowWeb,CustomAuthManager,RoleMapper airflowStyle
+    class KeycloakServer,KeycloakGroups keycloakStyle
