@@ -1,34 +1,34 @@
+class CustomKeycloakAuthManager(KeycloakAuthManager):
 
-from keycloak.exceptions import KeycloakPostError
-from fastapi import HTTPException, status
+    async def refresh_user(self, user: User | None) -> User | None:
+        if not user or not user.refresh_token:
+            return None
 
-log = logging.getLogger(__name__)
-
-class OidcKeycloakAuthManager(KeycloakAuthManager):
-
-    def refresh_user(self, user):
         try:
-            return super().refresh_user(user=user)
+            # Laisse le provider officiel tenter le refresh
+            return await super().refresh_user(user)
 
-        except KeycloakPostError as exc:
-            # Keycloak refuses refresh: refresh token no longer active
-            if exc.response_code == 400 and b"invalid_grant" in exc.response_body:
-                log.warning(
-                    "Keycloak refresh failed (invalid_grant). Forcing re-login."
-                )
-                # IMPORTANT: raise 401 so Airflow triggers auth flow instead of RBAC 403
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session expired. Please re-authenticate.",
+        except KeycloakPostError as e:
+            # CAS NORMAL : refresh_token expiré ou invalide
+            if e.response_code == 400 and "invalid_grant" in str(e):
+                logging.warning(
+                    "Keycloak refresh failed (invalid_grant). "
+                    "Clearing Airflow session and forcing re-login."
                 )
 
-            # Other KeycloakPostError: let it bubble (or handle specifically if you want)
+                # 🔥 POINT CLÉ : on détruit la session Airflow
+                clear_session()
+
+                # IMPORTANT :
+                # - on ne lève PAS d’exception
+                # - on ne retourne PAS de user partiel
+                # - Airflow va considérer l’utilisateur comme non authentifié
+                return None
+
+            # Autre erreur Keycloak → on propage
             raise
 
         except Exception:
-            # Conservative: avoid 500 loops
-            log.exception("Unexpected error during refresh_user; forcing re-login.")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session error. Please re-authenticate.",
-            )
+            logging.exception("Unexpected error during refresh_user")
+            clear_session()
+            return None
