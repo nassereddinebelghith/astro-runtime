@@ -1,4 +1,4 @@
-import logging
+
 from keycloak.exceptions import KeycloakPostError
 from fastapi import HTTPException, status
 
