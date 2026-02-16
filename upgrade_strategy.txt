@@ -1,0 +1,144 @@
+Airflow Upgrade Strategy From Airflow 2.9.3 to Airflow 3.1.6 (Astronomer
+OAS 4.0.0)
+
+1.  Objective
+
+Upgrade the existing Airflow platform from Airflow 2.9.3 to Airflow
+3.1.6 using Astronomer OAS 4.0.0, ensuring:
+
+-   No disruption to ongoing development activities
+-   Controlled validation of DAG compatibility
+-   Minimal risk before production rollout
+-   Clear rollback capability during the validation phase
+
+2.  Overall Strategy
+
+The upgrade will follow a hybrid approach:
+
+-   Blue-Green strategy on the Dev environment
+-   Big Bang strategy on higher environments (QA / Pre-Prod / Prod)
+
+This approach minimizes risk while avoiding unnecessary infrastructure
+duplication across all environments.
+
+3.  Phase 1 – Blue-Green Upgrade on Dev
+
+3.1 Parallel Environment Creation
+
+A second Airflow environment will be provisioned in parallel with the
+existing Dev instance.
+
+This new environment will include:
+
+-   A new PostgreSQL database instance
+-   Required network flows opened
+-   Elasticsearch configuration
+-   All dependent services
+-   Airflow 3.1.6 running on Astronomer OAS 4.0.0
+
+The current Dev environment (Airflow 2.9.3) remains untouched and fully
+operational during this phase.
+
+3.2 Git Strategy
+
+-   A new Git branch (upgrade branch) will be created.
+-   This branch will be linked to the new Airflow 3.1.6 test
+    environment.
+-   All DAG adjustments will be developed and validated in this branch.
+
+3.3 DAG Refactoring & Compatibility Fixes
+
+The upgrade branch will focus on addressing:
+
+-   Deprecated modules
+-   Renamed imports
+-   Removed operators or hooks
+-   API changes
+-   Provider package updates
+-   Any Airflow 3 breaking changes
+
+Corrections will be performed incrementally until:
+
+-   All DAGs load successfully
+-   No import errors remain
+-   Scheduler and tasks execute correctly
+-   Functional validation is completed
+
+3.4 Validation Period
+
+Once DAGs are fully compatible:
+
+-   The environment will run for a validation period.
+-   Stability, logs, execution time, and error rates will be monitored.
+-   Any regressions will be corrected.
+
+3.5 Merge & Cleanup
+
+After validation:
+
+-   The upgrade branch will be merged into the main Dev branch.
+-   The legacy Dev Airflow 2.9.3 instance will be decommissioned.
+-   The temporary blue environment will become the new standard Dev
+    instance.
+-   The temporary infrastructure created solely for testing may then be
+    removed if not required.
+
+4.  Phase 2 – Big Bang Upgrade on Higher Environments
+
+Once Dev is fully validated and stable:
+
+-   QA / Calife / Pre-Prod / Prod environments will be upgraded
+    directly.
+-   No parallel environment will be created.
+-   Each environment will be upgraded in place to Airflow 3.1.6.
+
+Why Big Bang Here?
+
+Because:
+
+-   DAG code is already validated and stable
+-   Compatibility issues have been resolved in Dev
+-   Risk is significantly reduced
+
+5.  Execution Flow Across Environments
+
+6.  Dev – Blue-Green
+
+    -   Parallel environment
+    -   DAG fixes
+    -   Validation
+    -   Merge
+    -   Old instance removal
+
+7.  QA / Calife – Big Bang
+
+    -   Direct upgrade to Airflow 3.1.6
+    -   Validation
+
+8.  Pre-Prod – Big Bang
+
+    -   Direct upgrade
+    -   Short validation window
+
+9.  Production – Big Bang
+
+    -   Controlled maintenance window
+    -   Final validation
+
+10. Risk Mitigation
+
+-   Dev Blue-Green guarantees no service interruption during
+    refactoring.
+-   Code-based validation ensures DAG compatibility before higher
+    environment upgrades.
+-   Incremental environment promotion reduces production risk.
+-   Clear rollback strategy exists at Dev stage (original instance
+    remains intact until validation is complete).
+
+7.  Benefits of This Strategy
+
+-   Controlled and secure migration
+-   Early detection of breaking changes
+-   Limited infrastructure duplication
+-   Reduced production risk
+-   Optimized upgrade timeline
