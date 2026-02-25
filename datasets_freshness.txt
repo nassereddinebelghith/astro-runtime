@@ -1,0 +1,25 @@
+Thanks for sharing the model details.
+
+Technically, it is possible to interact directly with the dataset_dag_run_queue table (via ORM or direct database operations) in order to clear pending entries. However, I would not recommend this approach for the following reasons:
+	1.	The table is part of Airflow’s internal scheduler mechanism and is not intended to be manipulated externally.
+	2.	Deleting entries manually can introduce race conditions if the scheduler is processing dataset events concurrently.
+	3.	It is not part of the public API, so it is not officially supported and may break during Airflow upgrades.
+	4.	It can lead to inconsistencies if new dataset events are emitted while the queue is being modified.
+
+From an architectural perspective, the behavior you are observing is not a bug. It is the expected behavior of dataset scheduling in Airflow. The scheduler only verifies that each required dataset has at least one unconsumed event. It does not validate temporal alignment between those events.
+
+In other words, dataset scheduling is event-driven, not time-window-based.
+
+A more robust and production-safe approach would be to keep dataset scheduling as-is and implement business-level validation inside the DAG itself. The first task of the DAG can validate dataset freshness and check whether their timestamps fall within an acceptable time window. If the datasets are not aligned (for example, updated on different days), the DAG can safely skip or fail early without executing downstream logic.
+
+This solution has several advantages:
+	•	No manipulation of internal Airflow tables
+	•	No race conditions with the scheduler
+	•	Fully compatible with future Airflow upgrades
+	•	Clear separation between infrastructure behavior and business rules
+
+If strict same-day updates are a hard requirement, another alternative would be to move away from dataset scheduling and instead use a scheduled DAG combined with sensors and explicit time validation logic. That model is more deterministic for time-based constraints.
+
+From a production stability standpoint, I strongly recommend avoiding direct modification of dataset_dag_run_queue and handling the alignment logic within the DAG itself.
+
+Let me know your thoughts, and we can align on the safest approach moving forward
